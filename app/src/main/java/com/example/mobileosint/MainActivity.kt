@@ -20,6 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -158,7 +160,27 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
     items(trend.keywords,key={it.key}){keyword->KeywordCard(keyword,!ui.busy){label->query=label;submit(label)}}
      item{var expanded by remember(trend.end){mutableStateOf(false)};TextButton(onClick={expanded=!expanded}){Text(if(expanded)"Hide details" else "Details")};if(expanded)SelectionContainer{Text("${trend.filters}\n${ui.diagnostics}",style=MaterialTheme.typography.bodySmall)}}
     }else{
-    item{SelectionContainer{if(ui.text.isNotBlank()&&!ui.busy)Markdown(ui.text,modifier=Modifier.fillMaxWidth())else Text(ui.text.ifBlank{if(ui.reportId!=null)"No answer text was returned. Check the status above and the saved evidence below." else "Add an HTTPS RSS/Atom feed in Sources and sync it. Keyword coverage is calculated locally; other answers use selected evidence and OpenRouter."})}}
+    item{
+     if(ui.text.isNotBlank()&&!ui.busy){
+      Column(Modifier.fillMaxWidth()){
+       Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
+      IconButton(onClick={
+       val sources=ui.evidence.sortedBy{it.citation}.joinToString("\n\n"){evidence->
+        "[${evidence.citation}] ${evidence.title}\n${evidence.source}\n${evidence.url}\n${if(evidence.publishedAt!=null)"Published: ${TrendDisplay.time(evidence.publishedAt)}" else "Published: unknown | First seen: ${evidence.firstSeenAt?.let{TrendDisplay.time(it)}?:"unknown"}"}"
+       }
+       val copiedText=buildString{
+        append(ui.text.trim())
+        if(sources.isNotBlank())append("\n\nSources\n\n").append(sources)
+       }
+       val clipboard=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+       clipboard.setPrimaryClip(ClipData.newPlainText("Research answer",copiedText))
+       Toast.makeText(context,"Answer and sources copied",Toast.LENGTH_SHORT).show()
+      }){Icon(Icons.Filled.ContentCopy,contentDescription="Copy answer and sources")}
+       }
+       SelectionContainer{Markdown(ui.text,modifier=Modifier.fillMaxWidth())}
+      }
+     }else SelectionContainer{Text(ui.text.ifBlank{if(ui.reportId!=null)"No answer text was returned. Check the status above and the saved evidence below." else "Add an HTTPS RSS/Atom feed in Sources and sync it. Keyword coverage is calculated locally; other answers use selected evidence and OpenRouter."})}
+    }
      if(ui.diagnostics.isNotBlank())item{Text(ui.diagnostics,style=MaterialTheme.typography.bodySmall)}
      items(ui.evidence,key={it.id}){e->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp)){
     Text("[${e.citation}] ${e.title}",style=MaterialTheme.typography.titleSmall)
