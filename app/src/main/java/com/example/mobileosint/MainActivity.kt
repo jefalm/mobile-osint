@@ -32,9 +32,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.mikepenz.markdown.m3.Markdown
 import kotlinx.coroutines.flow.collect
 import java.time.Instant
 import java.time.ZoneId
@@ -106,9 +108,10 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
    if(questionFocused){controlsVisible=true;accumulatedScroll=0f}
    else if(listState.firstVisibleItemIndex==0&&listState.firstVisibleItemScrollOffset==0){controlsVisible=true;accumulatedScroll=0f}
    else{
-    accumulatedScroll+=consumed.y
-    if(accumulatedScroll<=-threshold){controlsVisible=false;accumulatedScroll=0f}
-    else if(accumulatedScroll>=threshold){controlsVisible=true;accumulatedScroll=0f}
+    if(consumed.y<0f){
+     accumulatedScroll+=consumed.y
+     if(accumulatedScroll<=-threshold){controlsVisible=false;accumulatedScroll=0f}
+    }else accumulatedScroll=0f
    }
    return Offset.Zero
   }
@@ -137,7 +140,8 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
     }
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
      Button(onClick={submit(query)},enabled=query.isNotBlank()&&!ui.busy,modifier=Modifier.weight(1f)){Text("Analyze")}
-     Button(onClick={submit("what are the keywords trending")},enabled=!ui.busy,modifier=Modifier.weight(1f)){Text("Trending topics")}
+      Button(onClick={submit("latest news")},enabled=!ui.busy,modifier=Modifier.weight(1f)){Text("Latest news",modifier=Modifier.fillMaxWidth(),textAlign=TextAlign.Center)}
+      Button(onClick={submit("what are the keywords trending")},enabled=!ui.busy,modifier=Modifier.weight(1f)){Text("Trending topics",modifier=Modifier.fillMaxWidth(),textAlign=TextAlign.Center)}
     }
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){TextButton(onClick={showFilters=true},enabled=!ui.busy){Text("Filters")}}
     Text("${if(selectedSources.isEmpty())"All feeds" else "${selectedSources.size} feeds"} | ${if(selectedPublishers.isEmpty())"All publishers" else "${selectedPublishers.size} publishers"} | ${selectedLanguageMode.label} ${topic.takeIf{it.isNotBlank()}?.let{"| $it"}?:""}",style=MaterialTheme.typography.bodySmall)
@@ -154,7 +158,7 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
     items(trend.keywords,key={it.key}){keyword->KeywordCard(keyword,!ui.busy){label->query=label;submit(label)}}
      item{var expanded by remember(trend.end){mutableStateOf(false)};TextButton(onClick={expanded=!expanded}){Text(if(expanded)"Hide details" else "Details")};if(expanded)SelectionContainer{Text("${trend.filters}\n${ui.diagnostics}",style=MaterialTheme.typography.bodySmall)}}
     }else{
-     item{SelectionContainer{Text(ui.text.ifBlank{if(ui.reportId!=null)"No answer text was returned. Check the status above and the saved evidence below." else "Add an HTTPS RSS/Atom feed in Sources and sync it. Keyword coverage is calculated locally; other answers use selected evidence and OpenRouter."})}}
+    item{SelectionContainer{if(ui.text.isNotBlank()&&!ui.busy)Markdown(ui.text,modifier=Modifier.fillMaxWidth())else Text(ui.text.ifBlank{if(ui.reportId!=null)"No answer text was returned. Check the status above and the saved evidence below." else "Add an HTTPS RSS/Atom feed in Sources and sync it. Keyword coverage is calculated locally; other answers use selected evidence and OpenRouter."})}}
      if(ui.diagnostics.isNotBlank())item{Text(ui.diagnostics,style=MaterialTheme.typography.bodySmall)}
      items(ui.evidence,key={it.id}){e->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp)){
     Text("[${e.citation}] ${e.title}",style=MaterialTheme.typography.titleSmall)
