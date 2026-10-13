@@ -1,0 +1,9 @@
+1. Extract ZIP. Open the MobileOsint folder in Android Studio (File > Open).
+2. Sync Gradle. Install SDK 35 if prompted. Use a Java 17-compatible runtime.
+3. Connect Android 8+ phone with USB debugging enabled. Select app and Run.
+4. Settings: save your own OpenRouter key. Default chat model: openrouter/auto.
+5. Sources: add an authorized HTTPS RSS/Atom URL with recent articles. Sync.
+6. Research: ask about those articles. Reports save automatically.
+7. Optional: enable embeddings and sync again (cloud API charges apply).
+Read README.md and VALIDATION.json. APK compilation/device execution are unverified.
+The included command-line launcher is a documented custom bootstrap, not the official Gradle wrapper binary.

@@ -1,0 +1,12 @@
+{
+  "apk_compiled": false,
+  "android_device_tested": false,
+  "kotlin_unit_tests_executed": false,
+  "sql_statements_checked": 20,
+  "sqlite_cascade_tests": "passed",
+  "manifest_xml": "passed",
+  "kotlin_delimiter_checks": "passed (not compilation)",
+  "bootstrap_java_compiled": "passed",
+  "bootstrap_info_smoke_test": "passed",
+  "limitations": "No Android SDK or Kotlin compiler installed; dependency downloads unavailable in build environment."
+}
