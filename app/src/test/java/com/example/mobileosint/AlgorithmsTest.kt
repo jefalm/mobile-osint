@@ -237,6 +237,12 @@ class AlgorithmsTest {
   assertEquals(setOf("en","und"),ResearchLanguageMode.ENGLISH.languageCodes)
   assertEquals(setOf("pt","en","und"),ResearchLanguageMode.BOTH.languageCodes)
   assertEquals(ResearchLanguageMode.ENGLISH,ResearchLanguageMode.fromCodes(setOf("en","und")))
+  assertEquals("pt-BR",ResearchLanguageMode.PORTUGUESE.speechLocale)
+  assertEquals("Portuguese language intput",ResearchLanguageMode.PORTUGUESE.speechUiLabel)
+  assertEquals("en-US",ResearchLanguageMode.ENGLISH.speechLocale)
+  assertEquals("English language intput",ResearchLanguageMode.ENGLISH.speechUiLabel)
+  assertEquals("en",ResearchLanguageMode.BOTH.speechLocale)
+  assertEquals("English language intput",ResearchLanguageMode.BOTH.speechUiLabel)
  }
  @Test fun publisherDiversityDiffersFromFeedDiversityAndKeepsDisagreement(){
   val docs=listOf(article("a","Rates rise","The bank raised rates",source="one",url="https://www.paper.example/rss"),article("b","Rates fall","The bank lowered rates",source="two",url="https://paper.example/atom"),article("c","Rates unchanged","The bank held rates",source="three",url="https://other.example/rss"))

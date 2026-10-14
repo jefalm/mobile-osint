@@ -14,8 +14,10 @@ import com.google.gson.JsonParser
 import kotlin.math.ln
 
 data class ResearchFilters(val fromAt:Long?=null,val toAt:Long?=null,val sourceIds:Set<String> = emptySet(),val publishers:Set<String> = emptySet(),val topic:String="",val languages:Set<String> = setOf("pt","en","und"),val trendMinutes:Int=60)
-enum class ResearchLanguageMode(val label:String,val languageCodes:Set<String>){
- PORTUGUESE("Portuguese",setOf("pt")),ENGLISH("English",setOf("en","und")),BOTH("Both",setOf("pt","en","und"));
+enum class ResearchLanguageMode(val label:String,val languageCodes:Set<String>,val speechLocale:String,val speechUiLabel:String){
+ PORTUGUESE("Portuguese",setOf("pt"),"pt-BR","Portuguese language intput"),
+ ENGLISH("English",setOf("en","und"),"en-US","English language intput"),
+ BOTH("Both",setOf("pt","en","und"),"en","English language intput");
  companion object{fun fromCodes(codes:Set<String>)=entries.firstOrNull{it.languageCodes==codes}?:BOTH}
 }
 data class TrendSupport(val title:String,val url:String,val publisher:String,val publishedAt:Long?,val firstSeenAt:Long,val excerpt:String)

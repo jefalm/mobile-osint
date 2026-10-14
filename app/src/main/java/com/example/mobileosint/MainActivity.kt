@@ -1,13 +1,17 @@
 package com.example.mobileosint
+import android.app.Activity
 import android.os.Bundle
 import android.content.Intent
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -22,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -120,6 +125,14 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
  }}
  LaunchedEffect(listState){snapshotFlow{listState.firstVisibleItemIndex==0&&listState.firstVisibleItemScrollOffset==0}.collect{atTop->if(atTop){controlsVisible=true;accumulatedScroll=0f}}}
  val context=LocalContext.current
+ val speechLauncher=rememberLauncherForActivityResult(contract=ActivityResultContracts.StartActivityForResult()){result->
+  if(result.resultCode==Activity.RESULT_OK){
+   val spokenText=result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+   if(!spokenText.isNullOrBlank()){
+    query=spokenText
+   }
+  }
+ }
  val sources by vm.sources.collectAsStateWithLifecycle()
  var showFilters by remember{mutableStateOf(false)};var filterView by remember{mutableIntStateOf(0)}
  var selectedSources by remember{mutableStateOf(setOf<String>())};var selectedPublishers by remember{mutableStateOf(setOf<String>())}
@@ -132,7 +145,31 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
  Column(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
   AnimatedVisibility(visible=controlsVisible||questionFocused,enter=expandVertically(expandFrom=Alignment.Top)+fadeIn(),exit=shrinkVertically(shrinkTowards=Alignment.Top)+fadeOut()){
    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
-    OutlinedTextField(query,{query=it.take(2000)},label={Text("Question about indexed feeds")},modifier=Modifier.fillMaxWidth().onFocusChanged{questionFocused=it.isFocused;if(it.isFocused){controlsVisible=true;accumulatedScroll=0f}},enabled=!ui.busy)
+    OutlinedTextField(
+     query,
+     {query=it.take(2000)},
+     label={Text("Question about indexed feeds")},
+     trailingIcon={
+      IconButton(
+       onClick={
+        val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply{
+         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+         putExtra(RecognizerIntent.EXTRA_LANGUAGE,selectedLanguageMode.speechLocale)
+         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE,selectedLanguageMode.speechLocale)
+         putExtra(RecognizerIntent.EXTRA_PROMPT,selectedLanguageMode.speechUiLabel)
+        }
+        runCatching{speechLauncher.launch(intent)}.onFailure{
+         Toast.makeText(context,"Speech recognition unavailable",Toast.LENGTH_SHORT).show()
+        }
+       },
+       enabled=!ui.busy
+      ){
+       Icon(Icons.Filled.Mic,contentDescription=selectedLanguageMode.speechUiLabel)
+      }
+     },
+     modifier=Modifier.fillMaxWidth().onFocusChanged{questionFocused=it.isFocused;if(it.isFocused){controlsVisible=true;accumulatedScroll=0f}},
+     enabled=!ui.busy
+    )
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
      ResearchLanguageMode.entries.forEachIndexed{index,mode->SegmentedButton(
       selected=selectedLanguageMode==mode,
