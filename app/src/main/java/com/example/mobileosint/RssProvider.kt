@@ -7,8 +7,9 @@ import java.util.Locale
 
 data class FeedItem(val identity:String,val title:String,val url:String,val text:String,val publishedAt:Long?,val contentType:String="UNKNOWN")
 data class Feed(val title:String,val items:List<FeedItem>)
-class RssProvider{
- suspend fun fetch(url:String)=parse(Network.get(url),url)
+interface FeedProvider { suspend fun fetch(url:String):Feed }
+class RssProvider:FeedProvider{
+ override suspend fun fetch(url:String)=parse(Network.get(url),url)
  fun parse(xml:String,feedUrl:String):Feed{
   val dbf=javax.xml.parsers.DocumentBuilderFactory.newInstance().apply{
    isNamespaceAware=true

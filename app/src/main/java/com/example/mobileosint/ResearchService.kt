@@ -1,4 +1,5 @@
 package com.example.mobileosint
+import android.database.sqlite.SQLiteConstraintException
 import android.util.Log
 import androidx.room.withTransaction
 import kotlinx.coroutines.*
@@ -315,8 +316,8 @@ class RoomFlatVectorStore:VectorStore {
   .map{it to Algorithms.cosine(query,Algorithms.decode(docs[it].embedding!!))}
   .filter{it.second>0.15}.sortedByDescending{it.second}.take(100).map{it.first}
 }
-class ResearchService(val db:AppDatabase,val settings:Settings){
- val dao=db.dao();private val rss=RssProvider();private val embed=EmbeddingProvider();private val ai:AiProvider=OpenRouterProvider();private val vectors:VectorStore=RoomFlatVectorStore()
+class ResearchService(val db:AppDatabase,val settings:Settings,private val rss:FeedProvider=RssProvider()){
+ val dao=db.dao();private val embed=EmbeddingProvider();private val ai:AiProvider=OpenRouterProvider();private val vectors:VectorStore=RoomFlatVectorStore()
  private val syncLock=Mutex()
  val progress=MutableStateFlow("Ready")
  val ready=CompletableDeferred<Unit>()
@@ -325,9 +326,9 @@ class ResearchService(val db:AppDatabase,val settings:Settings){
   val updates=withContext(Dispatchers.Default){dao.unclassifiedArticles().mapNotNull{article->Algorithms.detectLanguage(article.title+" "+article.body).takeIf{it!="und"}?.let{article.id to it}}}
   db.withTransaction{for((id,language) in updates)dao.setArticleLanguage(id,language)}
  }
- suspend fun addSource(url:String){ready.await();val clean=url.trim();require(clean.startsWith("https://")){"Use an HTTPS RSS/Atom URL"}
+ suspend fun addSource(url:String){ready.await();val clean=url.trim();require(clean.startsWith("https://")){"Use an HTTPS RSS/Atom URL"};require(dao.hasSourceUrl(clean)==0){"Feed already exists"}
   val feed=withContext(Dispatchers.IO){rss.fetch(clean)}
-  db.withTransaction{require(dao.sourceCount()<100){"Maximum 100 feeds"};dao.addSource(SourceEntity(UUID.randomUUID().toString(),clean,feed.title))};progress.value="Feed added. Tap Sync."
+  db.withTransaction{require(dao.sourceCount()<100){"Maximum 100 feeds"};try{dao.addSource(SourceEntity(UUID.randomUUID().toString(),clean,feed.title))}catch(e:SQLiteConstraintException){throw IllegalArgumentException("Feed already exists",e)}};progress.value="Feed added. Tap Sync."
  }
  suspend fun importFeeds(input:String,onProgress:(FeedImportState)->Unit):FeedImportState {
   ready.await()
