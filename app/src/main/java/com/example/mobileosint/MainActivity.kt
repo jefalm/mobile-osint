@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -43,7 +44,17 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mikepenz.markdown.m3.Markdown
@@ -101,9 +112,47 @@ object TrendDisplay {
 }
 
 class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);window.statusBarColor=android.graphics.Color.BLACK;WindowCompat.getInsetsController(window,window.decorView).isAppearanceLightStatusBars=false;setContent{MaterialTheme{Surface(Modifier.fillMaxSize()){OsintApp()}}}}}
+private data class SelectionMenuState(val rect:Rect,val onCopy:(()->Unit)?,val onPaste:(()->Unit)?,val onCut:(()->Unit)?,val onSelectAll:(()->Unit)?)
+private class SearchTextToolbar:TextToolbar{
+ var menu by mutableStateOf<SelectionMenuState?>(null)
+ override val status get()=if(menu==null)TextToolbarStatus.Hidden else TextToolbarStatus.Shown
+ override fun showMenu(rect:Rect,onCopyRequested:(()->Unit)?,onPasteRequested:(()->Unit)?,onCutRequested:(()->Unit)?,onSelectAllRequested:(()->Unit)?){menu=SelectionMenuState(rect,onCopyRequested,onPasteRequested,onCutRequested,onSelectAllRequested)}
+ override fun hide(){menu=null}
+}
+private class SelectionMenuPositionProvider(private val rect:Rect):PopupPositionProvider{
+ override fun calculatePosition(anchorBounds:IntRect,windowSize:IntSize,layoutDirection:LayoutDirection,popupContentSize:IntSize):IntOffset{
+  val x=((rect.left+rect.right-popupContentSize.width)/2).toInt().coerceIn(0,(windowSize.width-popupContentSize.width).coerceAtLeast(0))
+  val above=(rect.top-popupContentSize.height).toInt()
+  val y=if(above>=0)above else rect.bottom.toInt().coerceAtMost((windowSize.height-popupContentSize.height).coerceAtLeast(0))
+  return IntOffset(x,y)
+ }
+}
+@Composable private fun SearchSelectionToolbar(toolbar:SearchTextToolbar){
+ val menu=toolbar.menu?:return
+ val context=LocalContext.current
+ Popup(popupPositionProvider=remember(menu.rect){SelectionMenuPositionProvider(menu.rect)},onDismissRequest={},properties=PopupProperties(focusable=false,dismissOnBackPress=false,dismissOnClickOutside=false)){
+  Surface(shape=MaterialTheme.shapes.small,shadowElevation=8.dp,color=MaterialTheme.colorScheme.inverseSurface){
+   Row(verticalAlignment=Alignment.CenterVertically){
+    menu.onCut?.let{TextButton(onClick={it();toolbar.hide()},contentPadding=PaddingValues(horizontal=8.dp)){Text("Cut",color=MaterialTheme.colorScheme.inverseOnSurface)}}
+    menu.onCopy?.let{TextButton(onClick={it();toolbar.hide()},contentPadding=PaddingValues(horizontal=8.dp)){Text("Copy",color=MaterialTheme.colorScheme.inverseOnSurface)}}
+    menu.onPaste?.let{TextButton(onClick={it();toolbar.hide()},contentPadding=PaddingValues(horizontal=8.dp)){Text("Paste",color=MaterialTheme.colorScheme.inverseOnSurface)}}
+    menu.onSelectAll?.let{TextButton(onClick={it();toolbar.hide()},contentPadding=PaddingValues(horizontal=8.dp)){Text("Select all",color=MaterialTheme.colorScheme.inverseOnSurface)}}
+    menu.onCopy?.let{copy->TextButton(onClick={
+     copy()
+     val clipboard=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+     val selected=clipboard.primaryClip?.takeIf{it.itemCount>0}?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
+     if(!selected.isNullOrEmpty())context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/search?q=${Uri.encode(selected)}")))
+     toolbar.hide()
+    },contentPadding=PaddingValues(horizontal=8.dp)){Text("Search",color=MaterialTheme.colorScheme.inverseOnSurface)}}
+   }
+  }
+ }
+}
 @Composable fun OsintApp(vm:OsintViewModel=viewModel()){
  var tab by remember{mutableIntStateOf(0)};val ui by vm.ui.collectAsStateWithLifecycle();val snackbarHostState=remember{SnackbarHostState()}
+ val searchToolbar=remember{SearchTextToolbar()}
  LaunchedEffect(ui.notice){if(ui.notice.isNotBlank()){snackbarHostState.showSnackbar(ui.notice);vm.clearNotice()}}
+ CompositionLocalProvider(LocalTextToolbar provides searchToolbar){
  Box(Modifier.fillMaxSize()){
   if(Build.VERSION.SDK_INT>=35)Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).align(Alignment.TopCenter).background(androidx.compose.ui.graphics.Color.Black))
   Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)){
@@ -114,6 +163,8 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
   }
   SnackbarHost(snackbarHostState,Modifier.align(Alignment.BottomCenter).padding(16.dp))
   }
+ }
+ SearchSelectionToolbar(searchToolbar)
  }
 }
 @Composable fun ResearchScreen(vm:OsintViewModel){
