@@ -197,8 +197,8 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
     OutlinedTextField(topic,{topic=it.take(80)},label={Text("Article topic (literal keyword or phrase)")},modifier=Modifier.fillMaxWidth())
     Text("A source tag is only a hint. Topic filters match article text; multilingual aliases cover a small vocabulary.",style=MaterialTheme.typography.bodySmall)
     OutlinedTextField(trendMinutes,{trendMinutes=it.take(4)},label={Text("Keyword trend window (minutes, 15-1440)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
-    OutlinedTextField(fromDate,{fromDate=it.take(10)},label={Text("From date (YYYY-MM-DD UTC)")},modifier=Modifier.fillMaxWidth())
-    OutlinedTextField(toDate,{toDate=it.take(10)},label={Text("Through date (YYYY-MM-DD UTC)")},modifier=Modifier.fillMaxWidth())
+    OutlinedTextField(fromDate,{fromDate=it.take(10)},label={Text("From date (YYYY-MM-DD)")},modifier=Modifier.fillMaxWidth())
+    OutlinedTextField(toDate,{toDate=it.take(10)},label={Text("Through date (YYYY-MM-DD)")},modifier=Modifier.fillMaxWidth())
    }
    1->{Text("No selection includes all publishers.");publishers.forEach{host->Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Checkbox(host in selectedPublishers,{selectedPublishers=if(it)selectedPublishers+host else selectedPublishers-host});Text(host)}}}
    else->{Text("No selection includes all research-enabled feeds.");sources.forEach{source->Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Checkbox(source.id in selectedSources,{selectedSources=if(it)selectedSources+source.id else selectedSources-source.id});Text(source.title)}}}
@@ -236,7 +236,7 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
   LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
    items(sources,key={it.id}){s->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp)){
     Text(s.title,style=MaterialTheme.typography.titleMedium);Text(s.url,style=MaterialTheme.typography.bodySmall)
-    Text("${s.status} | failures: ${s.failures}\nLast success: ${if(s.lastSuccess==0L)"never" else Instant.ofEpochMilli(s.lastSuccess)}",style=MaterialTheme.typography.bodySmall)
+    Text("${s.status} | failures: ${s.failures}\nLast success: ${if(s.lastSuccess==0L)"never" else TrendDisplay.time(s.lastSuccess)}",style=MaterialTheme.typography.bodySmall)
     Text("Tags: ${s.tags.ifBlank{"none"}}",style=MaterialTheme.typography.bodySmall)
     Row{Text("Fetch",Modifier.weight(1f));Switch(s.enabled,{vm.toggle(s,fetch=it)})}
     Row{Text("Include in research",Modifier.weight(1f));Switch(s.research,{vm.toggle(s,research=it)})}

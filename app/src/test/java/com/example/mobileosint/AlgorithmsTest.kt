@@ -165,7 +165,7 @@ class AlgorithmsTest {
   val sparse=KeywordTrends.analyze(current,previous,TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")
   assertTrue(sparse.text.contains("Sparse baseline"))
   assertTrue(sparse.text.contains("1 without publication dates"))
-  assertTrue(sparse.text.contains("first seen 1970-01-01T00:16:40Z, publication unknown"))
+  assertTrue(sparse.text.contains("first seen 31/12/1969 21:16 Brasília (America/Sao_Paulo), publication unknown"))
   assertFalse(sparse.text.contains("increase in indexed coverage"))
   val baseline=listOf(trendArticle("d","Energy supply"),trendArticle("e","Energy forecast",host="other.example"),trendArticle("f","Other subject",host="third.example"))
   val undated=KeywordTrends.analyze(current,baseline,TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")

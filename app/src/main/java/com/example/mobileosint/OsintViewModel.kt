@@ -5,7 +5,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.time.LocalDate
-import java.time.ZoneOffset
+import java.time.ZoneId
 data class UiState(val busy:Boolean=false,val text:String="",val notice:String="",val reportId:String?=null,val evidence:List<EvidenceEntity> = emptyList(),val diagnostics:String="",val trendReport:KeywordReport?=null)
 class OsintViewModel(app:Application):AndroidViewModel(app){
  val service=(app as OsintApplication).service
@@ -33,14 +33,15 @@ class OsintViewModel(app:Application):AndroidViewModel(app){
  fun clearNotice(){_ui.update{it.copy(notice="")}}
  fun ask(q:String,filters:ResearchFilters=ResearchFilters(),fromDate:String="",toDate:String=""){if(_ui.value.busy)return;_ui.value=UiState(busy=true);job=viewModelScope.launch{
     try{
-     val from=fromDate.takeIf{it.isNotBlank()}?.let{LocalDate.parse(it).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()}
-     val to=toDate.takeIf{it.isNotBlank()}?.let{LocalDate.parse(it).plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()-1}
+     val zone=ZoneId.of("America/Sao_Paulo")
+     val from=fromDate.takeIf{it.isNotBlank()}?.let{LocalDate.parse(it).atStartOfDay(zone).toInstant().toEpochMilli()}
+     val to=toDate.takeIf{it.isNotBlank()}?.let{LocalDate.parse(it).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()-1}
     val id=service.research(q,{text->_ui.update{it.copy(text=text)}},filters.copy(fromAt=from,toAt=to));val e=service.dao.evidence(id);val report=service.dao.report(id)
     val trend=report?.let{KeywordReportCodec.decode(it.text)}
       _ui.update{it.copy(reportId=id,evidence=e,diagnostics=report?.error?:"",trendReport=trend,text=if(trend!=null)"" else report?.text?:it.text,notice=if(report?.requestedModel=="local/keyword-trends") "Local keyword coverage saved; counts and links below." else if(report?.status=="COMPLETE")"Report saved. ${report.error.substringBefore(" | filters:")}" else "${report?.status?:"FAILED"}: ${report?.error?.substringAfter(" | finish_reason:",report.error)?.take(250)?:"Generation failed"}")}
     }
   catch(e:CancellationException){_ui.update{it.copy(notice="Cancelled; partial report retained")};throw e}
-  catch(e:java.time.format.DateTimeParseException){_ui.update{it.copy(notice="Dates must use YYYY-MM-DD (UTC).")}}
+  catch(e:java.time.format.DateTimeParseException){_ui.update{it.copy(notice="Dates must use YYYY-MM-DD.")}}
   catch(e:Exception){_ui.update{it.copy(notice=e.message?:"Research failed")}}
   finally{_ui.update{it.copy(busy=false)}}
  }}

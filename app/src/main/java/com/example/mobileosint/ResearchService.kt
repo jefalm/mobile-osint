@@ -106,9 +106,9 @@ object KeywordTrends {
   val stale=health.staleCount>0
   val coverage="${recent.size} articles / ${publisherCount(recent)} publisher hosts (previous: ${earlier.size} articles / ${publisherCount(earlier)} publisher hosts)"
   val lines=mutableListOf("Keyword coverage in indexed feeds (local, not web-wide)",
-   "Current: ${java.time.Instant.ofEpochMilli(start)} to ${java.time.Instant.ofEpochMilli(end)}: ${recent.size} articles, ${publisherCount(recent)} known publisher hosts, $undatedRecent without publication dates.",
-   "Previous equal window: ${java.time.Instant.ofEpochMilli(start-(end-start))} to ${java.time.Instant.ofEpochMilli(start)}: ${earlier.size} articles, ${publisherCount(earlier)} known publisher hosts, $undatedEarlier without publication dates.",
-   "Source freshness: ${health.staleCount}/${health.sourceCount} feeds not successfully refreshed in the current window; last success: ${health.lastRefresh?.takeIf{it>0}?.let{java.time.Instant.ofEpochMilli(it)}?:"never"}.")
+   "Current: ${TrendDisplay.clock(start)} to ${TrendDisplay.clock(end)}: ${recent.size} articles, ${publisherCount(recent)} known publisher hosts, $undatedRecent without publication dates.",
+   "Previous equal window: ${TrendDisplay.clock(start-(end-start))} to ${TrendDisplay.clock(start)}: ${earlier.size} articles, ${publisherCount(earlier)} known publisher hosts, $undatedEarlier without publication dates.",
+   "Source freshness: ${health.staleCount}/${health.sourceCount} feeds not successfully refreshed in the current window; last success: ${health.lastRefresh?.takeIf{it>0}?.let{TrendDisplay.clock(it)}?:"never"}.")
   if(baselineSparse)lines.add("Sparse baseline: too few preceding articles or publishers, or the preceding window extends beyond retained history; no trend can be established.")
   if(stale)lines.add("Stale or unrefreshed feed coverage: apparent increases may reflect ingestion timing, not news activity.")
   val ranked=mutableListOf<Map.Entry<String,List<TrendArticle>>>()
@@ -158,7 +158,7 @@ object KeywordTrends {
   lines.add("\n$label: ${articles.size} articles / $currentPublishers publishers; previous ${prior.size} articles / $previousPublishers publishers. $status.")
   keywords.add(TrendKeyword(term,label,articles.size,currentPublishers,prior.size,previousPublishers,status,articles.take(100).map{article->TrendSupport(article.title,article.url,publisher(article)?:"publisher unknown",article.publishedAt,article.firstSeenAt,excerpt(article,term))}))
   articles.distinctBy{publisher(it)?:"feed:${it.sourceId}"}.take(2).forEach{article->
-    lines.add("- ${article.title} (${publisher(article)?:"publisher unknown"}; ${if(article.publishedAt!=null)"published ${java.time.Instant.ofEpochMilli(article.publishedAt)}" else "first seen ${java.time.Instant.ofEpochMilli(article.firstSeenAt)}, publication unknown"})\n  ${article.url}")
+    lines.add("- ${article.title} (${publisher(article)?:"publisher unknown"}; ${if(article.publishedAt!=null)"published ${TrendDisplay.time(article.publishedAt)}" else "first seen ${TrendDisplay.time(article.firstSeenAt)}, publication unknown"})\n  ${article.url}")
     supporting.add(article)
    }
   }
@@ -434,7 +434,7 @@ class ResearchService(val db:AppDatabase,val settings:Settings){
   }
   val docs=dao.candidates(fromAt,toAt,allSources,allowed,filters.languages.toList(),pattern,alternate)
   val coverage=dao.coverage(fromAt,toAt,allSources,allowed,filters.languages.toList(),pattern,alternate)
-  val filterNote="filters: sources=${if(filters.sourceIds.isEmpty())"all" else filters.sourceIds.size}, publishers=${if(filters.publishers.isEmpty())"all" else filters.publishers.joinToString(",")}, topic=${filters.topic.ifBlank{"none"}}, languages=${filters.languages.sorted().joinToString(",")}, from=${java.time.Instant.ofEpochMilli(fromAt)}, to=${java.time.Instant.ofEpochMilli(toAt)}"
+  val filterNote="filters: sources=${if(filters.sourceIds.isEmpty())"all" else filters.sourceIds.size}, publishers=${if(filters.publishers.isEmpty())"all" else filters.publishers.joinToString(",")}, topic=${filters.topic.ifBlank{"none"}}, languages=${filters.languages.sorted().joinToString(",")}, from=${if(fromAt>0) TrendDisplay.clock(fromAt) else "start"}, to=${TrendDisplay.clock(toAt)}"
   require(docs.isNotEmpty()){"No indexed articles match ($filterNote). Check research switches, date window, selected languages and literal topic; unknown-language items need Unknown enabled."}
   val topic=Algorithms.latestTopic(question)
   val selection=withContext(Dispatchers.Default){LocalRetriever.rank(if(filters.topic.isBlank())question else "$question ${filters.topic}",docs)}
@@ -447,7 +447,7 @@ class ResearchService(val db:AppDatabase,val settings:Settings){
   val evidence=plan.evidence
   require(evidence.isNotEmpty()){ "No evidence fits the context budget. Increase context tokens or reduce reserved output." }
   val knownPublishers=docs.mapNotNull{LocalRetriever.publisher(it.sourceUrl)}.distinct().size
-  val scope="Indexed coverage: ${coverage.articleCount} articles from ${coverage.sourceCount} feeds ($knownPublishers known publisher hosts in candidates). Newest indexed item: ${coverage.newestAt?.let{java.time.Instant.ofEpochMilli(it)}?:"unknown"}; last successful feed refresh: ${coverage.lastRefresh?.takeIf{it>0}?.let{java.time.Instant.ofEpochMilli(it)}?:"never"}. Undated items use first-seen time, not a verified publication date."
+  val scope="Indexed coverage: ${coverage.articleCount} articles from ${coverage.sourceCount} feeds ($knownPublishers known publisher hosts in candidates). Newest indexed item: ${coverage.newestAt?.let{TrendDisplay.time(it)}?:"unknown"}; last successful feed refresh: ${coverage.lastRefresh?.takeIf{it>0}?.let{TrendDisplay.time(it)}?:"never"}. Undated items use first-seen time, not a verified publication date."
   val selected=evidence.mapIndexed{index,item->
    val docIndex=ranked.firstOrNull{docs[it].url==item.url&&docs[it].title==item.title}
    "[${index+1}] ${LocalRetriever.publisher(docIndex?.let{docs[it].sourceUrl}?:"")?:item.source}: ${item.title.take(50)} (${docIndex?.let{selection.reasons[it]}?:"recency"})"
