@@ -1,5 +1,6 @@
 package com.example.mobileosint
 import android.app.Activity
+import android.os.Build
 import android.os.Bundle
 import android.content.Intent
 import android.content.ClipData
@@ -17,6 +18,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.verticalScroll
@@ -38,6 +40,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -97,17 +100,20 @@ object TrendDisplay {
  }
 }
 
-class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);setContent{MaterialTheme{Surface(Modifier.fillMaxSize()){OsintApp()}}}}}
+class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);window.statusBarColor=android.graphics.Color.BLACK;WindowCompat.getInsetsController(window,window.decorView).isAppearanceLightStatusBars=false;setContent{MaterialTheme{Surface(Modifier.fillMaxSize()){OsintApp()}}}}}
 @Composable fun OsintApp(vm:OsintViewModel=viewModel()){
  var tab by remember{mutableIntStateOf(0)};val ui by vm.ui.collectAsStateWithLifecycle();val snackbarHostState=remember{SnackbarHostState()}
  LaunchedEffect(ui.notice){if(ui.notice.isNotBlank()){snackbarHostState.showSnackbar(ui.notice);vm.clearNotice()}}
- Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)){
+ Box(Modifier.fillMaxSize()){
+  if(Build.VERSION.SDK_INT>=35)Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).align(Alignment.TopCenter).background(androidx.compose.ui.graphics.Color.Black))
+  Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)){
   Column(Modifier.fillMaxSize()){
    Text("Mobile OSINT",style=MaterialTheme.typography.headlineSmall,modifier=Modifier.padding(16.dp))
    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){listOf("Research","Sources","Reports","Settings").forEachIndexed{i,label->TextButton(onClick={tab=i},enabled=!ui.busy||i==0){Text(label)}}}
    Box(Modifier.weight(1f)){when(tab){0->ResearchScreen(vm);1->SourcesScreen(vm);2->ReportsScreen(vm){tab=0};else->SettingsScreen(vm)}}
   }
   SnackbarHost(snackbarHostState,Modifier.align(Alignment.BottomCenter).padding(16.dp))
+  }
  }
 }
 @Composable fun ResearchScreen(vm:OsintViewModel){
