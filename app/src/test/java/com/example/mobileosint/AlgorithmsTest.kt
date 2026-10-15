@@ -420,12 +420,23 @@ class AlgorithmsTest {
   assertEquals(10,concurrent.second)
   assertTrue("serial=${serial.first}ms parallel=${parallel.first}ms",parallel.first<serial.first)
  }
- @Test fun refreshConcurrencyIsCappedAt100() = runBlocking {
-  var active=0;var peak=0
-  RefreshRunner.run((1..101).toList(),200,{item->
-   active++;peak=maxOf(peak,active);delay(10);active--;item
-  },{_,result->assertTrue(result.isSuccess)})
-  assertEquals(100,peak)
+ @Test fun refreshConcurrencyDefaultsToUnlimitedAndHonorsPositiveOverrides() = runBlocking {
+  val original=System.getProperty("MAX_CONCURRENT_FEED_FETCHES")
+  try{
+   System.clearProperty("MAX_CONCURRENT_FEED_FETCHES")
+   var active=0;var peak=0
+   RefreshRunner.run((1..101).toList(),0,{item->
+    active++;peak=maxOf(peak,active);delay(10);active--;item
+   },{_,result->assertTrue(result.isSuccess)})
+   assertEquals(101,peak)
+
+   System.setProperty("MAX_CONCURRENT_FEED_FETCHES","7")
+   var activeEnv=0;var peakEnv=0
+   RefreshRunner.run((1..25).toList(),0,{item->
+    activeEnv++;peakEnv=maxOf(peakEnv,activeEnv);delay(10);activeEnv--;item
+   },{_,result->assertTrue(result.isSuccess)})
+   assertEquals(7,peakEnv)
+  }finally{if(original==null) System.clearProperty("MAX_CONCURRENT_FEED_FETCHES") else System.setProperty("MAX_CONCURRENT_FEED_FETCHES",original)}
  }
  @Test fun refreshFailuresDoNotAbortOtherFeeds() = runBlocking {
   val processed=mutableListOf<Int>();var failures=0

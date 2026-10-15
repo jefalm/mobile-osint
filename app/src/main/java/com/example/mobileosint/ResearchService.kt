@@ -291,8 +291,19 @@ object LocalRetriever {
 data class FeedImportState(val total:Int=0,val completed:Int=0,val added:Int=0,val skipped:Int=0,val failed:Int=0,val failures:List<String> = emptyList(),val running:Boolean=false)
 
 object RefreshRunner {
+ internal fun effectiveLimit(limit:Int,size:Int):Int{
+  val envLimit=System.getenv("MAX_CONCURRENT_FEED_FETCHES")?.toIntOrNull() ?: System.getProperty("MAX_CONCURRENT_FEED_FETCHES")?.toIntOrNull()
+  val candidate=if(envLimit!=null&&envLimit>0) envLimit else limit
+  return when{
+   candidate>0 -> candidate
+   size>0 -> size
+   else -> 1
+  }
+ }
  suspend fun <T,R> run(items:List<T>,limit:Int,fetch:suspend (T)->R,apply:suspend (T,Result<R>)->Unit) = coroutineScope {
-  for(batch in items.chunked(limit.coerceIn(1,100))){
+  if(items.isEmpty())return@coroutineScope
+  val batchSize=effectiveLimit(limit,items.size)
+  for(batch in items.chunked(batchSize)){
    val results=batch.map{item->async {
     val result=try{Result.success(fetch(item))}catch(e:CancellationException){throw e}catch(e:Exception){Result.failure(e)}
     item to result
@@ -311,8 +322,10 @@ object FeedImporter {
   var state=FeedImportState(total=urls.size,completed=urls.size-pending.size,skipped=urls.size-pending.size,running=true)
   onProgress(state)
   val stateLock=Mutex()
+  val envLimit=System.getenv("MAX_CONCURRENT_FEED_FETCHES")?.toIntOrNull() ?: System.getProperty("MAX_CONCURRENT_FEED_FETCHES")?.toIntOrNull()
+  val batchSize=if(envLimit!=null&&envLimit>0) envLimit else 3
   coroutineScope {
-   for(batch in pending.chunked(3)) {
+   for(batch in pending.chunked(batchSize)) {
     batch.map{url->async {
      val result=try{(if(add(url)) 1 else 0) to ""}catch(e:CancellationException){throw e}catch(e:Exception){-1 to (e.message?.take(200)?:e.javaClass.simpleName)}
      stateLock.withLock {
@@ -401,14 +414,14 @@ class ResearchService(val db:AppDatabase,val settings:Settings,private val rss:F
  }
  suspend fun addSource(url:String){ready.await();val clean=url.trim();require(clean.startsWith("https://")){"Use an HTTPS RSS/Atom URL"};require(dao.hasSourceUrl(clean)==0){"Feed already exists"}
   val feed=withContext(Dispatchers.IO){rss.fetch(clean)}
-  db.withTransaction{require(dao.sourceCount()<100){"Maximum 100 feeds"};try{dao.addSource(SourceEntity(UUID.randomUUID().toString(),clean,feed.title))}catch(e:SQLiteConstraintException){throw IllegalArgumentException("Feed already exists",e)}};progress.value="Feed added. Tap Sync."
+  db.withTransaction{try{dao.addSource(SourceEntity(UUID.randomUUID().toString(),clean,feed.title))}catch(e:SQLiteConstraintException){throw IllegalArgumentException("Feed already exists",e)}};progress.value="Feed added. Tap Sync."
  }
  suspend fun importFeeds(input:String,onProgress:(FeedImportState)->Unit):FeedImportState {
   ready.await()
   return FeedImporter.run(input,dao.sourceUrls().toSet(),{url->
-   if(dao.hasSourceUrl(url)>0||dao.sourceCount()>=100) false
+   if(dao.hasSourceUrl(url)>0) false
    else try{addSource(url);true}catch(e:CancellationException){throw e}catch(e:Exception){
-    if(dao.hasSourceUrl(url)>0||dao.sourceCount()>=100) false else throw e
+    if(dao.hasSourceUrl(url)>0) false else throw e
    }
   },onProgress)
  }

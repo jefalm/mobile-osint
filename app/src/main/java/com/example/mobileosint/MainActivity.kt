@@ -560,7 +560,7 @@ private class SelectionMenuPositionProvider(private val rect:Rect):PopupPosition
   item{Text("Research filtering always uses local BM25 without query embeddings. Cloud embeddings, if enabled, are only generated during feed sync (up to 100 pending chunks per run).")}
   item{OutlinedTextField(days,{days=it},label={Text("Retention days (1-30)")},modifier=Modifier.fillMaxWidth())}
   item{OutlinedTextField(cap,{cap=it},label={Text("Maximum articles (10-5000)")},modifier=Modifier.fillMaxWidth())}
-  item{OutlinedTextField(refreshLimit,{refreshLimit=it},label={Text("Concurrent feed fetches (1-100)")},modifier=Modifier.fillMaxWidth())}
+  item{OutlinedTextField(refreshLimit,{refreshLimit=it},label={Text("Concurrent feed fetches (0 = unlimited; set MAX_CONCURRENT_FEED_FETCHES to override)")},modifier=Modifier.fillMaxWidth())}
   item{OutlinedTextField(topK,{topK=it},label={Text("Maximum evidence articles (1-24)")},modifier=Modifier.fillMaxWidth())}
   item{OutlinedTextField(contextLimit,{contextLimit=it},label={Text("Model context budget in tokens (4096-1048576)")},modifier=Modifier.fillMaxWidth())}
   item{OutlinedTextField(outputLimit,{outputLimit=it},label={Text("Reserved output tokens (256-4000)")},modifier=Modifier.fillMaxWidth())}
