@@ -32,7 +32,7 @@ class AlgorithmsTest {
  }
  @Test fun trendExtractionHandlesShortFieldsLanguageAndCase(){
   assertTrue(KeywordTrends.terms(trendArticle("empty","","")).isEmpty())
-  assertEquals(mapOf("ia" to "IA"),KeywordTrends.terms(trendArticle("short","IA")))
+  assertTrue(KeywordTrends.terms(trendArticle("short","IA")).isEmpty())
   for(language in listOf("pt","und")){
   val terms=KeywordTrends.terms(trendArticle("pt","PODE MAIS PARA Banco Central contra medidas",language=language))
   for(filler in listOf("pode","mais","para","contra"))assertFalse(filler,filler in terms)
@@ -47,6 +47,18 @@ class AlgorithmsTest {
   assertFalse("2026" in KeywordTrends.terms(trendArticle("date","2026 10 12")))
   assertEquals("GPT-6",KeywordTrends.terms(trendArticle("model","GPT-6"))["gpt-6"])
   assertFalse("us" in KeywordTrends.terms(trendArticle("pronoun","They showed US$ 20 and us")))
+ }
+ @Test fun irregularWhitespaceDoesNotBypassNormalizedStopwords(){
+  assertFalse(KeywordTrends.allowedToken("  US","en"))
+  assertFalse(KeywordTrends.allowedToken("IA","en"))
+  assertFalse(KeywordTrends.allowedToken("  EU ","en"))
+  assertFalse(KeywordTrends.allowedToken("  article  ","en"))
+  assertTrue(KeywordTrends.allowedToken("Solar","en"))
+ }
+ @Test fun extractedTokenAndPhraseLabelsAreTrimmedBeforeStorage(){
+  val terms=KeywordTrends.terms(trendArticle("spaced","  fim   Banco Central  "))
+  assertEquals("fim",terms["fim"])
+  assertEquals("Banco Central",terms["banco central"])
  }
  @Test fun repeatedPhraseNeedsIndependentArticlesAndPublishers(){
   val articles=listOf(trendArticle("a","Quantum battery opens",host="one.example"),trendArticle("a","Quantum battery opens",host="one.example"),trendArticle("b","Quantum battery improves",host="two.example"),trendArticle("c","Unrelated shipment",host="three.example"))
@@ -103,8 +115,8 @@ class AlgorithmsTest {
   assertTrue(result.text.contains("Banco do Brasil: 3 articles / 3 publishers"))
   assertTrue(result.text.contains("GPT-6: 3 articles / 3 publishers"))
   assertEquals("Inteligência Artificial",KeywordTrends.terms(current[1])["inteligencia artificial"])
-  assertEquals("IA",KeywordTrends.terms(current[0])["ia"])
-  assertEquals("DF",KeywordTrends.terms(current[0])["df"])
+  assertFalse("ia" in KeywordTrends.terms(current[0]))
+  assertFalse("df" in KeywordTrends.terms(current[0]))
   assertFalse("e" in KeywordTrends.terms(current[0]))
   assertFalse("s" in KeywordTrends.terms(trendArticle("possessive","Ukraine’s energy ceasefire")))
   assertFalse("segunda-feira" in KeywordTrends.terms(trendArticle("weekday","Feriado nesta segunda-feira")))
@@ -115,18 +127,18 @@ class AlgorithmsTest {
   for(filler in listOf("one","enquanto","over","sao","week","out","that","deve","foram","estao","presidente","ano","anos","year","years"))assertFalse(filler,filler in terms)
   assertEquals("São Paulo",terms["sao paulo"])
   assertEquals("One Direction",terms["one direction"])
-  assertEquals("US",terms["us"])
+  assertFalse("us" in terms)
   assertFalse("us 20" in terms)
   val bodyOnly=trendArticle("body","Exports rise","One Direction plays in São Paulo; they told us US$5 was paid while US exports grew")
   assertEquals("São Paulo",KeywordTrends.terms(bodyOnly)["sao paulo"])
   assertEquals("One Direction",KeywordTrends.terms(bodyOnly)["one direction"])
-  assertEquals("US",KeywordTrends.terms(bodyOnly)["us"])
+  assertFalse("us" in KeywordTrends.terms(bodyOnly))
   assertFalse("us" in KeywordTrends.terms(trendArticle("pronoun","They showed us around","They told us the news")))
   assertFalse("us" in KeywordTrends.terms(trendArticle("money","US$ 50 deal","US$20 more")))
   assertEquals("Fashion Week",KeywordTrends.terms(trendArticle("event","Fashion Week opens"))["fashion week"])
   assertEquals("Presidente Prudente",KeywordTrends.terms(trendArticle("city","Presidente Prudente", "presidente Donald Trump visited Presidente Prudente"))["presidente prudente"])
   val country=KeywordTrends.analyze(listOf(trendArticle("country","Trade dispute","They told us US$10 was paid, but the US president denied it")),emptyList(),TrendFeedHealth(1,0,1_000_000L),0L,1_000_000L,"all")
-  assertTrue(country.report.keywords.first{it.key=="us"}.supports.first().excerpt.contains("the US president"))
+  assertFalse(country.report.keywords.any{it.key=="us"})
  }
  @Test fun overlapAndFreshnessAreEvidenceSpecific(){
   val recent=listOf(trendArticle("a","Energy ceasefire confirmed",host="a.example"),trendArticle("b","Energy ceasefire debated",host="b.example"),trendArticle("c","Energy ceasefire contested",host="c.example"))
@@ -585,9 +597,9 @@ class AlgorithmsTest {
    assertFalse("UI boilerplate term '$term' should be blocked", term in extractedTerms)
   }
 
-  // Verify legitimate uppercase acronym "US" in country context is preserved while lowercase "us" pronoun is blocked
+  // Verify uppercase and lowercase tokens shorter than three characters are blocked
   val countryArticle=trendArticle("us_test", "Diplomacy Update", "They discussed US policy.")
   val countryTerms=KeywordTrends.terms(countryArticle)
-  assertEquals("US", countryTerms["us"])
+  assertFalse("us" in countryTerms)
  }
 }

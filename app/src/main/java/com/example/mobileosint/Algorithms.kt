@@ -6,7 +6,7 @@ import java.text.Normalizer
 import kotlin.math.*
 object Algorithms {
  private val stopwords=("a an and are as at be by for from how in is it of on or the to what which with about latest recent news updates do does happened show find list tell me " +
-  "um uma o os as e em de da das dos no na nos nas por para que qual quais como sao sobre com mais ultimas ultima recentes recente noticias novidades aconteceu acontecimentos mostre quero saber").split(' ').toSet()
+  "um uma o os as e em de da das dos no na nos nas por para que qual quais como sao sobre com mais ultimas ultima recentes recente noticias novidades aconteceu acontecimentos mostre quero saber").split(Regex("\\s+")).filter{it.isNotBlank()}.map{tokens(it).single()}.toSet()
  private val synonyms=mapOf("clima" to "climate","climate" to "climate","economia" to "economy","economy" to "economy","economico" to "economy","economic" to "economy","saude" to "health","health" to "health","eleicao" to "election","eleicoes" to "election","election" to "election","elections" to "election","tecnologia" to "technology","technology" to "technology","energia" to "energy","energy" to "energy","preco" to "price","precos" to "price","price" to "price","prices" to "price","guerra" to "war","war" to "war","mudanca" to "change","mudancas" to "change","change" to "change","changes" to "change")
  private val portugueseMarkers=setOf("uma","sao","sobre","noticias","para","com","mais","que","dos","das","pela","pelo","hoje","apos","seu","sua","como","entre")
  private val englishMarkers=setOf("the","and","with","from","news","after","that","this","their","which","about","today","between","will","have")
