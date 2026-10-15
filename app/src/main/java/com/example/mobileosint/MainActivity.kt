@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -64,6 +65,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.net.URI
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 object TrendDisplay {
@@ -94,7 +97,15 @@ object TrendDisplay {
  val variations=keyword.variations.orEmpty()
  Card(Modifier.fillMaxWidth()){
   Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
-  TextButton(onClick={onTopicClick(keyword.label)},enabled=enabled,contentPadding=PaddingValues(0.dp)){Text(keyword.label,style=MaterialTheme.typography.titleMedium)}
+  Row(verticalAlignment=Alignment.CenterVertically){
+   TextButton(onClick={onTopicClick(keyword.label)},enabled=enabled,modifier=Modifier.weight(1f),contentPadding=PaddingValues(0.dp)){Text(keyword.label,style=MaterialTheme.typography.titleMedium)}
+   IconButton(onClick={
+    val query=runCatching{URLEncoder.encode(keyword.label,StandardCharsets.UTF_8.name())}.getOrNull()
+    query?.let{encoded->runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/search?q=$encoded")))}}
+   },enabled=enabled,modifier=Modifier.size(40.dp)){
+    Icon(Icons.Filled.Search,contentDescription="Search on Google")
+   }
+  }
   if(variations.isNotEmpty()){
    val shown=variations.take(2)
    val remaining=variations.size-shown.size

@@ -59,6 +59,7 @@ object KeywordTrends {
  private val urls=Regex("(?i)\\b(?:https?://|www\\.)[^\\s<>]+")
  private val feedPrefix=Regex("(?i)^\\s*arxiv:\\S+\\s+announce type:\\s*\\w+\\s+abstract:\\s*")
  private val word=Regex("[\\p{L}\\p{N}]+(?:-[\\p{L}\\p{N}]+)*")
+ private val phraseOnlyTerms=setOf("appeared","times","show","world","day","days","life","people","two","rio","dois","pessoas","vida").map(::key).toSet()
  private fun key(value:String)=Normalizer.normalize(value.trim().lowercase(Locale.ROOT),Normalizer.Form.NFD).replace(Regex("\\p{M}+"),"")
  private fun clean(value:String)=value.replace(feedPrefix,"").replace(urls," ").replace(markup," ").replace(boilerplate," ")
  internal fun terms(article:TrendArticle):Map<String,String>{
@@ -68,7 +69,7 @@ object KeywordTrends {
    val matches=word.findAll(text).toList()
   matches.forEach{match->
    val token=match.value.trim()
-   if(allowed(token))result.putIfAbsent(key(token),token)
+    if(allowed(token)&&key(token) !in phraseOnlyTerms)result.putIfAbsent(key(token),token)
   }
   for(size in 2..minOf(3,matches.size))for(index in 0..matches.size-size){
     val group=matches.subList(index,index+size)

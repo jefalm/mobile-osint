@@ -44,6 +44,10 @@ class AlgorithmsTest {
     assertFalse("not", "not" in terms)
    assertEquals("Solar Energy",terms["solar energy"])
   }
+  val standaloneTerms=KeywordTrends.terms(trendArticle("low-signal","appeared Times Show world day days life people two Rio dois pessoas vida"))
+  for(term in listOf("appeared","times","show","world","day","days","life","people","two","rio","dois","pessoas","vida"))assertFalse("$term should require a composed phrase",term in standaloneTerms)
+  val composedTerms=KeywordTrends.terms(trendArticle("composed","peaceful world; Financial Times; morning show; people appeared; quality of life; Rio de Janeiro; two people; vida pessoal"))
+  for(phrase in listOf("peaceful world","financial times","morning show","people appeared","quality of life","rio de janeiro","two people","vida pessoal"))assertTrue(phrase,phrase in composedTerms)
   assertFalse("ia" in KeywordTrends.terms(trendArticle("lower","ia")))
   assertFalse("2026" in KeywordTrends.terms(trendArticle("date","2026 10 12")))
   assertEquals("GPT-6",KeywordTrends.terms(trendArticle("model","GPT-6"))["gpt-6"])
