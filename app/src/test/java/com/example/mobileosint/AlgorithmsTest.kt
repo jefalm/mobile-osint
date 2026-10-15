@@ -39,8 +39,9 @@ class AlgorithmsTest {
    assertEquals("Banco Central",terms["banco central"])
   }
   for(language in listOf("en","und")){
-   val terms=KeywordTrends.terms(trendArticle("en","They SHOULD say there is more news about Solar Energy",language=language))
+    val terms=KeywordTrends.terms(trendArticle("en","They SHOULD say there is more news about Solar Energy; this is not correct",language=language))
    for(filler in listOf("they","should","say","there","more","about"))assertFalse(filler,filler in terms)
+    assertFalse("not", "not" in terms)
    assertEquals("Solar Energy",terms["solar energy"])
   }
   assertFalse("ia" in KeywordTrends.terms(trendArticle("lower","ia")))
@@ -78,6 +79,30 @@ class AlgorithmsTest {
   assertFalse("energy" in keys)
   assertTrue("reform" in keys)
  }
+ @Test fun overlappingPhraseIsStoredAsParentVariation(){
+  assertTrue(KeywordTrends.overlappingPhrases("Fim da escala","Escala 6x1"))
+  assertFalse(KeywordTrends.overlappingPhrases("Fim da escala","Escalaine 6x1"))
+  assertFalse(KeywordTrends.overlappingPhrases("Favor da recuperacao","Fim da escala"))
+  val current=buildList{
+    for(index in 1..2)add(trendArticle("parent$index","Fim da escala",host="parent$index.example"))
+    for(index in 1..4)add(trendArticle("child$index","Escala 6x1",host="child$index.example"))
+    for(index in 1..2)add(trendArticle("sibling$index","Escala nacional",host="sibling$index.example"))
+   add(trendArticle("shared","Fim da escala. Escala 6x1",host="shared.example"))
+   for((index,topic) in listOf("quantum","nebula","harbor","orchid","copper","forest","planet","signal","winter","canvas","rocket","island","velvet","comet").withIndex()){
+    add(trendArticle("filler$index",topic,host="filler$index.example"))
+   }
+  }
+  val previous=listOf(trendArticle("parent-old","Fim da escala",host="old-parent.example"),trendArticle("child-old","Escala 6x1",host="old-child.example"),trendArticle("sibling-old","Escala nacional",host="old-sibling.example"))
+  val report=KeywordTrends.analyze(current,previous,TrendFeedHealth(5,0,1_000_000L),0L,1_000_000L,"all").report
+  val parent=report.keywords.first{it.key=="escala 6x1"}
+  assertEquals(listOf("Fim da escala","Escala nacional"),parent.variations)
+  assertEquals(9,parent.currentArticles)
+  assertEquals(3,parent.previousArticles)
+  assertEquals(9,parent.supports.map{it.url}.distinct().size)
+  assertTrue(parent.supports.any{it.url=="https://child1.example/child1"})
+  assertTrue(parent.supports.any{it.url=="https://shared.example/shared"})
+  assertFalse(report.keywords.any{it.key=="fim da escala"||it.key=="escala nacional"})
+ }
  @Test fun repeatedPhraseNeedsIndependentArticlesAndPublishers(){
   val articles=listOf(trendArticle("a","Quantum battery opens",host="one.example"),trendArticle("a","Quantum battery opens",host="one.example"),trendArticle("b","Quantum battery improves",host="two.example"),trendArticle("c","Unrelated shipment",host="three.example"))
   val result=KeywordTrends.analyze(articles,emptyList(),TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")
@@ -94,7 +119,8 @@ class AlgorithmsTest {
   val keywords=result.report.keywords
   assertTrue(keywords.any{it.key=="luiz inacio lula"&&it.currentArticles==2&&it.previousArticles==2})
   assertFalse(keywords.any{it.key=="luiz inacio"||it.key=="inacio lula"||it.key=="lula da silva"})
-  assertTrue(keywords.any{it.key=="silva"&&it.currentArticles==4})
+  assertTrue(keywords.any{it.variations.orEmpty().contains("Lula da Silva")})
+  assertFalse(keywords.any{it.key=="silva"})
  }
 
  @Test fun keywordWindowsAreEqualAndRespectExplicitDates(){
@@ -181,6 +207,11 @@ class AlgorithmsTest {
   val result=KeywordTrends.analyze(listOf(trendArticle("a","São Paulo","São Paulo agora",publishedAt=null)),emptyList(),TrendFeedHealth(1,0,0L),0L,1_000_000L,"all")
   val saved=KeywordReportCodec.decode(KeywordReportCodec.encode(result.report))!!
   assertEquals(result.report.keywords.map{it.key},saved.keywords.map{it.key})
+  val legacyJson=com.google.gson.JsonParser.parseString(KeywordReportCodec.encode(result.report)).asJsonObject.apply{
+   getAsJsonArray("keywords").forEach{it.asJsonObject.remove("variations")}
+  }
+  val legacy=KeywordReportCodec.decode(legacyJson.toString())!!
+  assertTrue(legacy.keywords.all{it.variations==emptyList<String>()})
   val reordered=com.google.gson.JsonParser.parseString(KeywordReportCodec.encode(result.report)).asJsonObject
   val androidOrder=com.google.gson.JsonObject().apply{add("baselineSparse",reordered.get("baselineSparse"));reordered.entrySet().filter{it.key!="baselineSparse"}.forEach{add(it.key,it.value)}}
   assertEquals(saved.keywords.first().key,KeywordReportCodec.decode(androidOrder.toString())!!.keywords.first().key)

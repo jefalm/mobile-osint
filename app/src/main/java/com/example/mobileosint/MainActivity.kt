@@ -91,9 +91,15 @@ object TrendDisplay {
  val context=LocalContext.current
  var expanded by remember(keyword.key){mutableStateOf(false)}
  var visible by remember(keyword.key){mutableIntStateOf(6)}
+ val variations=keyword.variations.orEmpty()
  Card(Modifier.fillMaxWidth()){
   Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
   TextButton(onClick={onTopicClick(keyword.label)},enabled=enabled,contentPadding=PaddingValues(0.dp)){Text(keyword.label,style=MaterialTheme.typography.titleMedium)}
+  if(variations.isNotEmpty()){
+   val shown=variations.take(2)
+   val remaining=variations.size-shown.size
+   Text("Also covers: ${shown.joinToString(", ")}${if(remaining>0)" (+$remaining more)" else ""}",style=MaterialTheme.typography.bodySmall)
+  }
    Text("Now ${keyword.currentArticles} articles / ${keyword.currentPublishers} hosts · Before ${keyword.previousArticles} articles / ${keyword.previousPublishers} hosts",style=MaterialTheme.typography.bodyMedium)
    Text(keyword.status,style=MaterialTheme.typography.bodySmall)
   TextButton(onClick={expanded=!expanded}){Text(if(expanded)"Hide articles" else "Show supporting articles (${keyword.supports.size}${if(keyword.currentArticles>keyword.supports.size)" of ${keyword.currentArticles}" else ""})")}

@@ -24,14 +24,17 @@ enum class ResearchLanguageMode(val label:String,val languageCodes:Set<String>,v
  companion object{fun fromCodes(codes:Set<String>)=entries.firstOrNull{it.languageCodes==codes}?:BOTH}
 }
 data class TrendSupport(val title:String,val url:String,val publisher:String,val publishedAt:Long?,val firstSeenAt:Long,val excerpt:String)
-data class TrendKeyword(val key:String,val label:String,val currentArticles:Int,val currentPublishers:Int,val previousArticles:Int,val previousPublishers:Int,val status:String,val supports:List<TrendSupport>)
+data class TrendKeyword(val key:String,val label:String,val currentArticles:Int,val currentPublishers:Int,val previousArticles:Int,val previousPublishers:Int,val status:String,val supports:List<TrendSupport>,val variations:List<String>?=null)
 data class KeywordReport(val kind:String="keyword-trends-v2",val start:Long,val end:Long,val previousStart:Long,val currentArticles:Int,val currentPublishers:Int,val currentUndated:Int,val previousArticles:Int,val previousPublishers:Int,val previousUndated:Int,val staleFeeds:Int,val sourceCount:Int,val lastRefresh:Long?,val baselineSparse:Boolean,val filters:String,val keywords:List<TrendKeyword>)
 data class TrendSummary(val text:String,val diagnostics:String,val supporting:List<TrendArticle>,val report:KeywordReport)
 object KeywordReportCodec {
  private val gson=Gson()
  fun encode(report:KeywordReport):String=gson.toJson(report)
  fun decode(text:String):KeywordReport?=if(!text.startsWith("{"))null else runCatching{
-  if(JsonParser.parseString(text).asJsonObject.get("kind")?.asString=="keyword-trends-v2")gson.fromJson(text,KeywordReport::class.java) else null
+  if(JsonParser.parseString(text).asJsonObject.get("kind")?.asString=="keyword-trends-v2"){
+   val report=gson.fromJson(text,KeywordReport::class.java)
+   report.copy(keywords=report.keywords.map{it.copy(variations=it.variations.orEmpty())})
+  }else null
  }.getOrNull()
 }
 
@@ -45,7 +48,7 @@ object KeywordTrends {
   val precedingStart=start-(end-start)
   return Window(start,end,precedingStart,precedingStart>=retentionStart)
  }
- private val englishStop=("a an and are as at be been before but by can did do does for from had has have he he's her hers him his how i if in into is it its may me my of on one or other our out over per s she that their the there these this those to us was we week weeks were what when where which while who will with would year years you your "+
+ private val englishStop=("a an and are as at be been before but by can did do does for from had has have he he's her hers him his how i if in into is it its may me my not of on one or other our out over per s she that their the there these this those to us was we week weeks were what when where which while who will with would year years you your "+
   "about after also all any each even first here just more most much now only said say she some than them then they through too under up very we were why yet could should would might likely meanwhile reports reported says").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
  private val portugueseStop=("a ano anos as ao aos apos ate com como da das de dela dele depois deve devem do dos e em enquanto entre essa esse esta estao estava estavam este eu foi foram ha isso ja mais mas me meu minha na nas nao nesta neste no nos o os ou para pela pelo por porque que sao se sem seu sua seus suas ser sera serao sendo sobre tambem tem ter tu um uma uns umas presidente "+
   "ainda alguns algumas antes assim ate cada contra debaixo desde dia dias durante eles elas ela ele era eram essa essas esse esses estas estes eu hoje inicio mesmo muito muita muitos muitas nossa nossas nosso nossos onde pela pelas pelo pelos pode podem poderia podera pois qual quando quem se serao sido sob suas todo toda todos todas vai vao voce voces").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
@@ -93,13 +96,19 @@ object KeywordTrends {
  }
  internal fun standaloneDuplicates(topKeys:List<String>):Set<String>{
   val phraseWords=topKeys.flatMap{candidate->
-   val words=key(candidate).split(Regex("\\s+")).filter{it.isNotBlank()}
+   val words=keyWords(candidate)
    if(words.size>1)words else emptyList()
   }.toSet()
   return topKeys.map(::key).filter{candidate->
-   val words=candidate.split(Regex("\\s+")).filter{it.isNotBlank()}
+   val words=keyWords(candidate)
    words.size==1&&candidate in phraseWords
   }.toSet()
+ }
+ private fun keyWords(value:String)=key(value).split(Regex("\\s+")).filter{it.isNotBlank()}
+ private fun meaningfulKeyWords(value:String)=keyWords(value).filter{it.length>=3&&it !in englishStop&&it !in portugueseStop&&it !in noise}
+ internal fun overlappingPhrases(first:String,second:String):Boolean{
+  val firstWords=meaningfulKeyWords(first);val secondWords=meaningfulKeyWords(second)
+  return firstWords.size>1&&secondWords.size>1&&firstWords.any{it in secondWords}
  }
  private fun excerpt(article:TrendArticle,term:String):String{
   if(term in terms(article.copy(body="")))return article.title
@@ -147,10 +156,19 @@ object KeywordTrends {
   val candidates=currentIndex.entries.filter{!repeated||it.value.size>=2&&publisherCount(it.value)>=2}
     .sortedWith(compareByDescending<Map.Entry<String,List<TrendArticle>>>(::score).thenByDescending{it.value.size}.thenByDescending{publisherCount(it.value)}.thenByDescending{it.key.split(' ').size}.thenBy{it.key})
   val redundantStandalone=mutableSetOf<String>()
+  val variationsByParent=linkedMapOf<String,LinkedHashSet<String>>()
   while(true){
    ranked.clear()
+   variationsByParent.clear()
    for(candidate in candidates){
     if(candidate.key in redundantStandalone)continue
+    val parent=ranked.firstOrNull{chosen->
+     overlappingPhrases(chosen.key,candidate.key)||variationsByParent[chosen.key].orEmpty().any{overlappingPhrases(it,candidate.key)}
+    }
+    if(parent!=null){
+      variationsByParent.getOrPut(parent.key){linkedSetOf()}.add(candidate.key)
+     continue
+    }
     val candidateIds=candidate.value.map{it.id}.toSet();val candidatePrior=previousIndex[candidate.key].orEmpty().map{it.id}.toSet()
     val overlap=ranked.any{chosen->
      val chosenIds=chosen.value.map{it.id}.toSet();val chosenPrior=previousIndex[chosen.key].orEmpty().map{it.id}.toSet()
@@ -161,30 +179,38 @@ object KeywordTrends {
     if(!overlap)ranked.add(candidate)
     if(ranked.size==8)break
    }
-   val newlyRedundant=standaloneDuplicates(ranked.map{it.key})-redundantStandalone
+  val bracketKeys=ranked.map{it.key}+variationsByParent.values.flatMap{it}
+  val newlyRedundant=standaloneDuplicates(bracketKeys)-redundantStandalone
    if(newlyRedundant.isEmpty())break
    redundantStandalone.addAll(newlyRedundant)
   }
   val supporting=mutableListOf<TrendArticle>()
   val keywords=mutableListOf<TrendKeyword>()
   if(ranked.isEmpty())lines.add("No indexed articles in the current window; no keyword trend can be assessed.")
-  for((term,articles) in ranked){
+  for((rankedTerm,_) in ranked){
+   val groupKeys=listOf(rankedTerm)+variationsByParent[rankedTerm].orEmpty()
+   val term=groupKeys.maxByOrNull{currentIndex[it].orEmpty().size}?:rankedTerm
+   val variationKeys=groupKeys.filterNot{it==term}.sortedByDescending{currentIndex[it].orEmpty().size}
+   val articles=currentIndex[term].orEmpty()
    val prior=previousIndex[term].orEmpty()
-   val currentPublishers=publisherCount(articles);val previousPublishers=publisherCount(prior)
-   val missingDates=articles.any{it.publishedAt==null}||prior.any{it.publishedAt==null}
-  val staleRelevant=stale&&(sourceRefresh.isEmpty()||(articles+prior).any{(sourceRefresh[it.sourceId]?:Long.MIN_VALUE)<start})
+   val currentArticles=(articles+variationKeys.flatMap{currentIndex[it].orEmpty()}).distinctBy{it.id}
+   val previousArticles=(prior+variationKeys.flatMap{previousIndex[it].orEmpty()}).distinctBy{it.id}
+   val currentPublishers=publisherCount(currentArticles);val previousPublishers=publisherCount(previousArticles)
+   val missingDates=currentArticles.any{it.publishedAt==null}||previousArticles.any{it.publishedAt==null}
+  val staleRelevant=stale&&(sourceRefresh.isEmpty()||(currentArticles+previousArticles).any{(sourceRefresh[it.sourceId]?:Long.MIN_VALUE)<start})
    val status=when{
-    baselineSparse||prior.size<2||previousPublishers<2->"sparse baseline; no verified trend"
+    baselineSparse||previousArticles.size<2||previousPublishers<2->"sparse baseline; no verified trend"
   staleRelevant->"stale feed coverage; no verified trend (supporting sources stale)"
     missingDates->"publication dates missing; no verified trend"
-    articles.size<3||currentPublishers<2->"insufficient current coverage"
-   articles.size>prior.size&&currentPublishers>=previousPublishers->if(stale)"increase in indexed coverage among refreshed supporting feeds; wider coverage uncertain" else "increase in indexed coverage"
+    currentArticles.size<3||currentPublishers<2->"insufficient current coverage"
+   currentArticles.size>previousArticles.size&&currentPublishers>=previousPublishers->if(stale)"increase in indexed coverage among refreshed supporting feeds; wider coverage uncertain" else "increase in indexed coverage"
     else->"no supported increase"
    }
   val label=terms(articles.first())[term]?:term
-  lines.add("\n$label: ${articles.size} articles / $currentPublishers publishers; previous ${prior.size} articles / $previousPublishers publishers. $status.")
-  keywords.add(TrendKeyword(term,label,articles.size,currentPublishers,prior.size,previousPublishers,status,articles.take(100).map{article->TrendSupport(article.title,article.url,publisher(article)?:"publisher unknown",article.publishedAt,article.firstSeenAt,excerpt(article,term))}))
-  articles.distinctBy{publisher(it)?:"feed:${it.sourceId}"}.take(2).forEach{article->
+  val variationLabels=variationKeys.map{key->currentIndex[key]?.firstOrNull()?.let{terms(it)[key]?:key}?:key}
+  lines.add("\n$label: ${currentArticles.size} articles / $currentPublishers publishers; previous ${previousArticles.size} articles / $previousPublishers publishers. $status.")
+  keywords.add(TrendKeyword(term,label,currentArticles.size,currentPublishers,previousArticles.size,previousPublishers,status,currentArticles.take(100).map{article->TrendSupport(article.title,article.url,publisher(article)?:"publisher unknown",article.publishedAt,article.firstSeenAt,excerpt(article,term))},variationLabels.takeIf{it.isNotEmpty()}))
+  currentArticles.distinctBy{publisher(it)?:"feed:${it.sourceId}"}.take(2).forEach{article->
     lines.add("- ${article.title} (${publisher(article)?:"publisher unknown"}; ${if(article.publishedAt!=null)"published ${TrendDisplay.time(article.publishedAt)}" else "first seen ${TrendDisplay.time(article.firstSeenAt)}, publication unknown"})\n  ${article.url}")
     supporting.add(article)
    }
