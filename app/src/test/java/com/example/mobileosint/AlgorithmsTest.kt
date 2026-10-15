@@ -566,4 +566,28 @@ class AlgorithmsTest {
   val eventError = StreamEvent(error = "Provider error 500")
   assertEquals("Provider error 500", eventError.error)
  }
+
+ @Test fun lengthBaselineAndBoilerplateNoiseFilterBlocksShortWordsAndUIBoilerplate(){
+  val noiseArticle=trendArticle(
+   id="noise_test",
+   title="10 Comments and 5 Replies on Share, Subscribe or Read More",
+   body="He said it is about us in the news. Please like, follow, and leave comments below."
+  )
+  val extractedTerms=KeywordTrends.terms(noiseArticle)
+
+  // Verify short <=2 letter noise words / pronouns are blocked across English and Portuguese
+  for(shortWord in listOf("he", "it", "us", "in", "to", "at", "by", "of", "on", "or", "if", "is", "me", "my", "we", "do", "no", "so", "up", "da", "em", "se", "ou", "eu", "ha")){
+   assertFalse("Short word '$shortWord' should be blocked", shortWord in extractedTerms)
+  }
+
+  // Verify UI boilerplate terms (case-insensitive) are filtered
+  for(term in listOf("comments", "comment", "share", "reply", "replies", "read more", "subscribe", "subscribers", "like", "likes", "follow")){
+   assertFalse("UI boilerplate term '$term' should be blocked", term in extractedTerms)
+  }
+
+  // Verify legitimate uppercase acronym "US" in country context is preserved while lowercase "us" pronoun is blocked
+  val countryArticle=trendArticle("us_test", "Diplomacy Update", "They discussed US policy.")
+  val countryTerms=KeywordTrends.terms(countryArticle)
+  assertEquals("US", countryTerms["us"])
+ }
 }

@@ -45,13 +45,13 @@ object KeywordTrends {
   val precedingStart=start-(end-start)
   return Window(start,end,precedingStart,precedingStart>=retentionStart)
  }
- private val englishStop=("a an and are as at be been before but by can did do does for from had has have how if in into is it its may of on one or other our out over per s that their the there these this those to us was week weeks were what when where which while who will with would year years you your "+
+ private val englishStop=("a an and are as at be been before but by can did do does for from had has have he he's her hers him his how i if in into is it its may me my of on one or other our out over per s she that their the there these this those to us was we week weeks were what when where which while who will with would year years you your "+
   "about after also all any each even first here just more most much now only said say she some than them then they through too under up very we were why yet could should would might likely meanwhile reports reported says").split(' ').toSet()
- private val portugueseStop=("a ano anos as ao aos apos ate com como da das de dela dele depois deve devem do dos e em enquanto entre essa esse esta estao estava estavam este foi foram ha isso ja mais mas na nas nao nesta neste no nos o os ou para pela pelo por porque que sao se sem seu sua seus suas ser sera serao sendo sobre tambem tem ter um uma uns umas presidente "+
+ private val portugueseStop=("a ano anos as ao aos apos ate com como da das de dela dele depois deve devem do dos e em enquanto entre essa esse esta estao estava estavam este eu foi foram ha isso ja mais mas me meu minha na nas nao nesta neste no nos o os ou para pela pelo por porque que sao se sem seu sua seus suas ser sera serao sendo sobre tambem tem ter tu um uma uns umas presidente "+
   "ainda alguns algumas antes assim ate cada contra debaixo desde dia dias durante eles elas ela ele era eram essa essas esse esses estas estes eu hoje inicio mesmo muito muita muitos muitas nossa nossas nosso nossos onde pela pelas pelo pelos pode podem poderia podera pois qual quando quem se serao sido sob suas todo toda todos todas vai vao voce voces").split(' ').toSet()
- private val noise=("article articles breaking click continue daily edition feed feeds headline headlines homepage latest live menu more new news newsletter read report reports reported said says share source sources story stories subscribe today top trending trend trends update updates yesterday " +
-  "assine artigo artigos confira desta desta-feira diz disse fonte fontes hoje jornal leia noticia noticias novo nova novos novas pagina publicidade saiba segundo veja segunda-feira terca-feira quarta-feira quinta-feira sexta-feira sabado domingo monday tuesday wednesday thursday friday saturday sunday photograph getty images photo credits copyright").split(' ').toSet()
- private val boilerplate=Regex("(?i)\\b(?:ap news|europe live|breaking news|latest news|read more|continue reading|click here|share this|skip to content|leia mais|saiba mais|veja tamb[eé]m)\\b")
+ private val noise=("article articles breaking click comment comments continue daily edition feed feeds follow followers following headline headlines homepage latest like likes live menu more new news newsletter photo photograph photo credits copyright post posts privacy privacy policy read read more report reports reported reply replies response responses rights reserved said says share shares shared sharing source sources story stories subscribe subscribers subscription terms today top trending trend trends update updates yesterday " +
+  "artigo artigos assine assinatura assinar comentarios comentario comentar confira curtir curtidas desta desta-feira diz disse fonte fontes hoje inscreva-se jornal leia leia mais noticia noticias novo nova novos novas pagina publicidade responder resposta respostas saiba saiba mais segundo seguidores seguir veja veja mais veja tambem segunda-feira terca-feira quarta-feira quinta-feira sexta-feira sabado domingo monday tuesday wednesday thursday friday saturday sunday getty images").split(' ').map{key(it)}.toSet()
+ private val boilerplate=Regex("(?i)\\b(?:ap news|europe live|breaking news|latest news|read more|continue reading|click here|share this|skip to content|leia mais|saiba mais|veja tamb[eé]m|leave a comment|add a comment|no comments|post a comment)\\b")
  private val markup=Regex("(?is)<(?:script|style)\\b[^>]*>.*?</(?:script|style)>|<[^>]+>|&(?:#\\d+|#x[0-9a-f]+|[a-z]+);")
  private val urls=Regex("(?i)\\b(?:https?://|www\\.)[^\\s<>]+")
  private val feedPrefix=Regex("(?i)^\\s*arxiv:\\S+\\s+announce type:\\s*\\w+\\s+abstract:\\s*")
@@ -64,7 +64,8 @@ object KeywordTrends {
   val stops=when(article.language){"pt"->portugueseStop;"en"->englishStop;else->portugueseStop+englishStop}
   fun allowed(value:String,following:Char?):Boolean{
    val normalized=key(value)
-   if(normalized in noise||!normalized.any{it.isLetter()}||value.length<3&&!acronym.matches(value))return false
+   if(normalized in noise||!normalized.any{it.isLetter()})return false
+   if(value.length<=2&&!acronym.matches(value))return false
    if(normalized !in stops)return true
    return value=="US"&&following!='$'
   }
