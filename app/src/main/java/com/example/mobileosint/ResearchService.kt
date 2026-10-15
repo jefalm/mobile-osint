@@ -91,6 +91,16 @@ object KeywordTrends {
   if(normalized in noise||!normalized.any{it.isLetter()})return false
   return normalized !in stops
  }
+ internal fun standaloneDuplicates(topKeys:List<String>):Set<String>{
+  val phraseWords=topKeys.flatMap{candidate->
+   val words=key(candidate).split(Regex("\\s+")).filter{it.isNotBlank()}
+   if(words.size>1)words else emptyList()
+  }.toSet()
+  return topKeys.map(::key).filter{candidate->
+   val words=candidate.split(Regex("\\s+")).filter{it.isNotBlank()}
+   words.size==1&&candidate in phraseWords
+  }.toSet()
+ }
  private fun excerpt(article:TrendArticle,term:String):String{
   if(term in terms(article.copy(body="")))return article.title
   val body=clean(article.body).take(320)
@@ -136,16 +146,24 @@ object KeywordTrends {
   }
   val candidates=currentIndex.entries.filter{!repeated||it.value.size>=2&&publisherCount(it.value)>=2}
     .sortedWith(compareByDescending<Map.Entry<String,List<TrendArticle>>>(::score).thenByDescending{it.value.size}.thenByDescending{publisherCount(it.value)}.thenByDescending{it.key.split(' ').size}.thenBy{it.key})
-  for(candidate in candidates){
-   val candidateIds=candidate.value.map{it.id}.toSet();val candidatePrior=previousIndex[candidate.key].orEmpty().map{it.id}.toSet()
-   val overlap=ranked.any{chosen->
-    val chosenIds=chosen.value.map{it.id}.toSet();val chosenPrior=previousIndex[chosen.key].orEmpty().map{it.id}.toSet()
-    chosen.key.split(' ').size>1&&candidate.key.split(' ').any{it in chosen.key.split(' ')}&&candidateIds.size>=2&&publisherCount(candidate.value)>=2&&
-     candidateIds.intersect(chosenIds).size.toDouble()/candidateIds.union(chosenIds).size>=0.8&&
-     (candidatePrior.isEmpty()&&chosenPrior.isEmpty()||candidatePrior.isNotEmpty()&&chosenPrior.isNotEmpty()&&candidatePrior.intersect(chosenPrior).size.toDouble()/candidatePrior.union(chosenPrior).size>=0.8)
+  val redundantStandalone=mutableSetOf<String>()
+  while(true){
+   ranked.clear()
+   for(candidate in candidates){
+    if(candidate.key in redundantStandalone)continue
+    val candidateIds=candidate.value.map{it.id}.toSet();val candidatePrior=previousIndex[candidate.key].orEmpty().map{it.id}.toSet()
+    val overlap=ranked.any{chosen->
+     val chosenIds=chosen.value.map{it.id}.toSet();val chosenPrior=previousIndex[chosen.key].orEmpty().map{it.id}.toSet()
+     chosen.key.split(' ').size>1&&candidate.key.split(Regex("\\s+")).any{it in chosen.key.split(Regex("\\s+"))}&&candidateIds.size>=2&&publisherCount(candidate.value)>=2&&
+      candidateIds.intersect(chosenIds).size.toDouble()/candidateIds.union(chosenIds).size>=0.8&&
+      (candidatePrior.isEmpty()&&chosenPrior.isEmpty()||candidatePrior.isNotEmpty()&&chosenPrior.isNotEmpty()&&candidatePrior.intersect(chosenPrior).size.toDouble()/candidatePrior.union(chosenPrior).size>=0.8)
+    }
+    if(!overlap)ranked.add(candidate)
+    if(ranked.size==8)break
    }
-   if(!overlap)ranked.add(candidate)
-   if(ranked.size==8)break
+   val newlyRedundant=standaloneDuplicates(ranked.map{it.key})-redundantStandalone
+   if(newlyRedundant.isEmpty())break
+   redundantStandalone.addAll(newlyRedundant)
   }
   val supporting=mutableListOf<TrendArticle>()
   val keywords=mutableListOf<TrendKeyword>()

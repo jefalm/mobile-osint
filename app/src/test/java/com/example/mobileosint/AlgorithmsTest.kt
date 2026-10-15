@@ -60,6 +60,24 @@ class AlgorithmsTest {
   assertEquals("fim",terms["fim"])
   assertEquals("Banco Central",terms["banco central"])
  }
+ @Test fun standaloneKeywordMatchesWholeNormalizedPhraseWordsOnly(){
+  assertEquals(setOf("solar","energy"),KeywordTrends.standaloneDuplicates(listOf("Solar Energy","solar","energy","energ","renewable")))
+ }
+ @Test fun standaloneDuplicateRemovalRefillsTheEightTopicLimit(){
+  val orders=listOf(
+   "market policy climate budget reform growth future supply",
+   "climate market reform policy future budget supply growth",
+   "reform market future policy supply climate growth budget",
+   "future market supply policy budget growth climate reform",
+   "budget market climate supply future reform policy growth"
+  )
+  val current=orders.mapIndexed{index,words->trendArticle("rank$index","${if(index<2)"Solar Energy" else "Solar"} $words",host="rank$index.example")}
+  val keys=KeywordTrends.analyze(current,emptyList(),TrendFeedHealth(5,0,1_000_000L),0L,1_000_000L,"all").report.keywords.map{it.key}
+  assertEquals(8,keys.size)
+  assertTrue("solar energy" in keys)
+  assertFalse("energy" in keys)
+  assertTrue("reform" in keys)
+ }
  @Test fun repeatedPhraseNeedsIndependentArticlesAndPublishers(){
   val articles=listOf(trendArticle("a","Quantum battery opens",host="one.example"),trendArticle("a","Quantum battery opens",host="one.example"),trendArticle("b","Quantum battery improves",host="two.example"),trendArticle("c","Unrelated shipment",host="three.example"))
   val result=KeywordTrends.analyze(articles,emptyList(),TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")
@@ -93,10 +111,12 @@ class AlgorithmsTest {
   val current=listOf(trendArticle("a","Solar solar solar energy","solar ".repeat(30),"paper.example"),trendArticle("b","Solar investment","solar ".repeat(20),"paper.example"),trendArticle("c","Solar panels","solar ".repeat(10),"other.example"))
   val previous=listOf(trendArticle("d","Solar rollout",host="paper.example"),trendArticle("e","Solar panels",host="other.example"),trendArticle("f","Unrelated sports",host="third.example"))
   val result=KeywordTrends.analyze(current,previous,TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"pt,en,und")
-  assertTrue(result.text.contains("Solar: 3 articles / 2 publishers; previous 2 articles / 2 publishers. increase in indexed coverage."))
+  assertFalse(result.report.keywords.any{it.key=="solar"})
+  val solarTopics=result.report.keywords.filter{"solar" in it.key.split(Regex("\\s+"))}
+  assertTrue(solarTopics.isNotEmpty())
   assertTrue(result.text.contains("https://paper.example/a"))
   assertTrue(result.text.contains("https://other.example/c"))
-  assertEquals(3,result.report.keywords.first{it.key=="solar"}.supports.map{it.url}.distinct().size)
+  assertEquals(3,solarTopics.flatMap{it.supports}.map{it.url}.distinct().size)
  }
  @Test fun trendClutterIsRemovedBeforeCountingInBothWindows(){
   val current=listOf(trendArticle("a","Nesta terça: Banco Central anuncia GPT-6 - AP News","<script>junkterm</script> &amp; Leia mais https://site.example/clutterterm; energia artificial",host="first.example"),trendArticle("b","Banco Central adota inteligência artificial | Europe live","www.site.example/clutterterm Continue reading",host="second.example"),trendArticle("c","Inteligência artificial no Banco Central","arXiv:2610.12855v1 Announce Type: new Abstract: inteligência artificial",host="third.example"))
@@ -154,7 +174,7 @@ class AlgorithmsTest {
   assertTrue(stale.report.keywords.first().status.contains("supporting sources stale"))
   assertFalse(stale.report.keywords.first().status.contains("increase"))
   val separate=KeywordTrends.analyze(recent+listOf(trendArticle("market","Energy market rises",host="market.example"),trendArticle("grid","Energy grid grows",host="grid.example")),previous,TrendFeedHealth(5,0,1_000L),0L,1_000_000L,"all")
-  assertTrue(separate.report.keywords.any{it.key=="energy"})
+  assertFalse(separate.report.keywords.any{it.key=="energy"})
   assertTrue(separate.report.keywords.any{it.key=="energy ceasefire"})
  }
  @Test fun keywordReportRoundTripLinksAndBrasiliaRollover(){
