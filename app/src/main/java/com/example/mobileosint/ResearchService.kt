@@ -187,7 +187,10 @@ object KeywordTrends {
   }
   val supporting=mutableListOf<TrendArticle>()
   val keywords=mutableListOf<TrendKeyword>()
+  val keywordLines=mutableListOf<List<String>>()
+  val keywordSupporting=mutableListOf<List<TrendArticle>>()
   if(ranked.isEmpty())lines.add("No indexed articles in the current window; no keyword trend can be assessed.")
+  val summaryPrefixSize=lines.size
   for((rankedTerm,_) in ranked){
    val groupKeys=listOf(rankedTerm)+variationsByParent[rankedTerm].orEmpty()
    val term=groupKeys.maxByOrNull{currentIndex[it].orEmpty().size}?:rankedTerm
@@ -209,13 +212,32 @@ object KeywordTrends {
    }
   val label=terms(articles.first())[term]?:term
   val variationLabels=variationKeys.map{key->currentIndex[key]?.firstOrNull()?.let{terms(it)[key]?:key}?:key}
+  val cardLineStart=lines.size
+  val cardSupportStart=supporting.size
   lines.add("\n$label: ${currentArticles.size} articles / $currentPublishers publishers; previous ${previousArticles.size} articles / $previousPublishers publishers. $status.")
   keywords.add(TrendKeyword(term,label,currentArticles.size,currentPublishers,previousArticles.size,previousPublishers,status,currentArticles.take(100).map{article->TrendSupport(article.title,article.url,publisher(article)?:"publisher unknown",article.publishedAt,article.firstSeenAt,excerpt(article,term))},variationLabels.takeIf{it.isNotEmpty()}))
   currentArticles.distinctBy{publisher(it)?:"feed:${it.sourceId}"}.take(2).forEach{article->
     lines.add("- ${article.title} (${publisher(article)?:"publisher unknown"}; ${if(article.publishedAt!=null)"published ${TrendDisplay.time(article.publishedAt)}" else "first seen ${TrendDisplay.time(article.firstSeenAt)}, publication unknown"})\n  ${article.url}")
     supporting.add(article)
    }
+  keywordLines.add(lines.subList(cardLineStart,lines.size).toList())
+  keywordSupporting.add(supporting.subList(cardSupportStart,supporting.size).toList())
   }
+  val sortedIndices=keywords.indices.sortedWith(
+   compareByDescending<Int>{keywords[it].supports.size}
+    .thenByDescending{keywords[it].currentArticles}
+    .thenByDescending{keywords[it].currentPublishers}
+    .thenBy{keywords[it].key}
+  )
+  val sortedKeywords=sortedIndices.map{keywords[it]}
+  val sortedLines=lines.take(summaryPrefixSize)+sortedIndices.flatMap{keywordLines[it]}
+  val sortedSupporting=sortedIndices.flatMap{keywordSupporting[it]}.distinctBy{it.id}
+  keywords.clear()
+  keywords.addAll(sortedKeywords)
+  lines.clear()
+  lines.addAll(sortedLines)
+  supporting.clear()
+  supporting.addAll(sortedSupporting)
   val report=KeywordReport(start=start,end=end,previousStart=start-(end-start),currentArticles=recent.size,currentPublishers=publisherCount(recent),currentUndated=undatedRecent,previousArticles=earlier.size,previousPublishers=publisherCount(earlier),previousUndated=undatedEarlier,staleFeeds=health.staleCount,sourceCount=health.sourceCount,lastRefresh=health.lastRefresh,baselineSparse=baselineSparse,filters=filters,keywords=keywords)
   return TrendSummary(lines.joinToString("\n"),"Local calculation; no OpenRouter call | $filters | $coverage | baseline=${if(baselineSparse)"sparse" else "measured"}, undated=$undatedRecent/$undatedEarlier, stale feeds=${health.staleCount}/${health.sourceCount}",supporting.distinctBy{it.id},report)
  }

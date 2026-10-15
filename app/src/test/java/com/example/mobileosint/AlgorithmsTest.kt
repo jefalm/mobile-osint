@@ -30,6 +30,17 @@ class AlgorithmsTest {
   assertEquals("semiconductor industry",result.report.keywords.first().key)
   assertEquals(3,result.report.keywords.first().currentArticles)
  }
+ @Test fun trendingCardsAndTheirTextAndEvidenceFollowSupportCounts(){
+  val current=buildList{
+   repeat(3){index->add(trendArticle("medium-$index","Quantum Battery",host="medium$index.example"))}
+   repeat(4){index->add(trendArticle("high-$index","Solar Energy",host="high$index.example"))}
+  }
+  val result=KeywordTrends.analyze(current,emptyList(),TrendFeedHealth(7,0,1_000_000L),0L,1_000_000L,"all")
+  val topics=result.report.keywords.filter{it.key in setOf("solar energy","quantum battery")}
+  assertEquals(listOf("solar energy","quantum battery"),topics.map{it.key})
+  assertTrue(result.text.indexOf("Solar Energy:")<result.text.indexOf("Quantum Battery:"))
+  assertEquals(listOf("high-0","high-1","medium-0","medium-1"),result.supporting.map{it.id})
+ }
  @Test fun trendExtractionHandlesShortFieldsLanguageAndCase(){
   assertTrue(KeywordTrends.terms(trendArticle("empty","","")).isEmpty())
   assertTrue(KeywordTrends.terms(trendArticle("short","IA")).isEmpty())
