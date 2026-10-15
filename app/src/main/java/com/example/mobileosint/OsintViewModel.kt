@@ -13,6 +13,10 @@ class OsintViewModel(app:Application):AndroidViewModel(app){
  val reports=service.dao.reports().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyList())
  val count=service.dao.count().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),0)
  val progress=service.progress
+ val syncRuns=service.dao.recentSyncRuns(30).stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyList())
+ val latestSyncRun=service.dao.latestSyncRunFlow().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),null)
+ val activeFeedFailures=service.dao.activeFeedFailures().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyList())
+ suspend fun getFeedSyncLogs(runId:String)=service.dao.feedLogsForRun(runId)
  private val _importState=MutableStateFlow(FeedImportState());val importState=_importState.asStateFlow()
  private val _ui=MutableStateFlow(UiState());val ui=_ui.asStateFlow();private var job:Job?=null
  fun action(block:suspend ()->Unit){viewModelScope.launch{try{block()}catch(e:CancellationException){throw e}catch(e:Exception){_ui.update{it.copy(notice=e.message?:"Operation failed")}}}}

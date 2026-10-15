@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
+import kotlinx.coroutines.launch
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -158,13 +159,174 @@ private class SelectionMenuPositionProvider(private val rect:Rect):PopupPosition
   Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)){
   Column(Modifier.fillMaxSize()){
    Text("Mobile OSINT",style=MaterialTheme.typography.headlineSmall,modifier=Modifier.padding(16.dp))
-   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){listOf("Research","Sources","Reports","Settings").forEachIndexed{i,label->TextButton(onClick={tab=i},enabled=!ui.busy||i==0){Text(label)}}}
-   Box(Modifier.weight(1f)){when(tab){0->ResearchScreen(vm);1->SourcesScreen(vm);2->ReportsScreen(vm){tab=0};else->SettingsScreen(vm)}}
+   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){listOf("Research","Sources","Reports","Dashboard","Settings").forEachIndexed{i,label->TextButton(onClick={tab=i},enabled=!ui.busy||i==0){Text(label)}}}
+   Box(Modifier.weight(1f)){when(tab){0->ResearchScreen(vm);1->SourcesScreen(vm);2->ReportsScreen(vm){tab=0};3->DashboardScreen(vm);else->SettingsScreen(vm)}}
   }
   SnackbarHost(snackbarHostState,Modifier.align(Alignment.BottomCenter).padding(16.dp))
   }
  }
  SearchSelectionToolbar(searchToolbar)
+ }
+}
+
+@Composable fun DashboardScreen(vm:OsintViewModel){
+ val syncRuns by vm.syncRuns.collectAsStateWithLifecycle()
+ val latestRun by vm.latestSyncRun.collectAsStateWithLifecycle()
+ val activeFailures by vm.activeFeedFailures.collectAsStateWithLifecycle()
+ val progress by vm.progress.collectAsStateWithLifecycle()
+
+ LazyColumn(
+  Modifier.fillMaxSize().padding(16.dp),
+  verticalArrangement=Arrangement.spacedBy(16.dp)
+ ){
+  item{
+   Text("Sync Dashboard & Telemetry",style=MaterialTheme.typography.titleLarge)
+   if(progress.isNotBlank()&&progress!="Ready"){
+    Text("Status: $progress",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)
+   }
+  }
+
+  // Section 1: Latest Run Dynamics
+  item{
+   Card(Modifier.fillMaxWidth()){
+    Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+      Text("Latest Execution Dynamics",style=MaterialTheme.typography.titleMedium)
+      OutlinedButton(onClick={vm.sync()}){Text("Sync now")}
+     }
+     if(latestRun!=null){
+      val run=latestRun!!
+      val statusColor=when(run.status){
+       "SUCCESS"->MaterialTheme.colorScheme.primary
+       "PARTIAL"->MaterialTheme.colorScheme.tertiary
+       else->MaterialTheme.colorScheme.error
+      }
+      Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+       Surface(shape=MaterialTheme.shapes.extraSmall,color=statusColor.copy(alpha=0.2f)){
+        Text(run.status,modifier=Modifier.padding(horizontal=8.dp,vertical=4.dp),style=MaterialTheme.typography.labelLarge,color=statusColor)
+       }
+       Text(TrendDisplay.time(run.timestamp),style=MaterialTheme.typography.bodySmall)
+       Text("(${run.durationMs} ms)",style=MaterialTheme.typography.bodySmall)
+      }
+      HorizontalDivider(Modifier.padding(vertical=4.dp))
+      Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+       Column{
+        Text("Feeds: ${run.successfulFeeds}/${run.totalFeeds} ok",style=MaterialTheme.typography.bodyMedium)
+        if(run.failedFeeds>0){
+         Text("${run.failedFeeds} failed",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+        }
+       }
+       Column(horizontalAlignment=Alignment.End){
+        Text("+${run.itemsAdded} added",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.primary)
+        Text("${run.itemsUpdated} updated · ${run.itemsExpired} expired · ${run.itemsPruned} pruned",style=MaterialTheme.typography.bodySmall)
+       }
+      }
+     }else{
+      Text("No sync runs recorded yet. Tap 'Sync now' to execute ingestion.",style=MaterialTheme.typography.bodyMedium)
+     }
+    }
+   }
+  }
+
+  // Section 2: Active Feed Failures
+  item{
+   Card(Modifier.fillMaxWidth()){
+    Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+     Text("Active Feed Failures (${activeFailures.size})",style=MaterialTheme.typography.titleMedium)
+     if(activeFailures.isEmpty()){
+      Text("All active feeds are healthy. No active failures detected.",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.primary)
+     }else{
+      activeFailures.forEach{log->
+       HorizontalDivider()
+       Column(verticalArrangement=Arrangement.spacedBy(2.dp)){
+        Text(log.sourceTitle.ifBlank{log.sourceUrl},style=MaterialTheme.typography.titleSmall,color=MaterialTheme.colorScheme.error)
+        Text(log.sourceUrl,style=MaterialTheme.typography.bodySmall)
+        Text("Error: ${log.errorMessage.ifBlank{log.status}}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+        Text("Last attempt: ${TrendDisplay.time(log.timestamp)}",style=MaterialTheme.typography.labelSmall)
+       }
+      }
+     }
+    }
+   }
+  }
+
+  // Section 3: Recent Execution Trends & History
+  item{
+   Text("Recent Execution Trends (${syncRuns.size})",style=MaterialTheme.typography.titleMedium)
+  }
+
+  if(syncRuns.isEmpty()){
+   item{
+    Text("No historical sync runs found.",style=MaterialTheme.typography.bodyMedium)
+   }
+  }else{
+   items(syncRuns,key={it.id}){run->
+    RunHistoryCard(run,vm)
+   }
+  }
+ }
+}
+
+@Composable fun RunHistoryCard(run:SyncRunEntity,vm:OsintViewModel){
+ var expanded by remember{mutableStateOf(false)}
+ var feedLogs by remember{mutableStateOf<List<FeedSyncLogEntity>?>(null)}
+ val scope=rememberCoroutineScope()
+
+ Card(Modifier.fillMaxWidth()){
+  Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
+   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+     val statusColor=when(run.status){
+      "SUCCESS"->MaterialTheme.colorScheme.primary
+      "PARTIAL"->MaterialTheme.colorScheme.tertiary
+      else->MaterialTheme.colorScheme.error
+     }
+     Surface(shape=MaterialTheme.shapes.extraSmall,color=statusColor.copy(alpha=0.2f)){
+      Text(run.status,modifier=Modifier.padding(horizontal=6.dp,vertical=2.dp),style=MaterialTheme.typography.labelSmall,color=statusColor)
+     }
+     Text(TrendDisplay.time(run.timestamp),style=MaterialTheme.typography.bodySmall)
+    }
+    Text("${run.durationMs} ms",style=MaterialTheme.typography.labelSmall)
+   }
+   Text(
+    "Feeds: ${run.successfulFeeds}/${run.totalFeeds} ok | +${run.itemsAdded} added, ${run.itemsUpdated} updated, ${run.itemsExpired} expired, ${run.itemsPruned} pruned",
+    style=MaterialTheme.typography.bodySmall
+   )
+   TextButton(onClick={
+    expanded=!expanded
+    if(expanded&&feedLogs==null){
+     scope.launch{feedLogs=vm.getFeedSyncLogs(run.id)}
+    }
+   }){
+    Text(if(expanded)"Hide feed details" else "Show feed details (${run.totalFeeds} feeds)")
+   }
+   if(expanded){
+    val logs=feedLogs
+    if(logs==null){
+     LinearProgressIndicator(Modifier.fillMaxWidth())
+    }else if(logs.isEmpty()){
+     Text("No feed logs recorded for this run.",style=MaterialTheme.typography.bodySmall)
+    }else{
+     Column(verticalArrangement=Arrangement.spacedBy(6.dp)){
+      logs.forEach{log->
+       HorizontalDivider()
+       Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+        Column(Modifier.weight(1f)){
+         Text(log.sourceTitle.ifBlank{log.sourceUrl},style=MaterialTheme.typography.titleSmall)
+         Text(log.sourceUrl,style=MaterialTheme.typography.labelSmall)
+         if(log.errorMessage.isNotBlank()){
+          Text("Diagnostic: ${log.errorMessage}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+         }else{
+          Text("Parsed: ${log.itemsParsed} · Added: ${log.itemsAdded} · Updated: ${log.itemsUpdated} · Unchanged: ${log.itemsUnchanged} · Expired: ${log.itemsExpired}",style=MaterialTheme.typography.bodySmall)
+         }
+        }
+        Text(log.status,style=MaterialTheme.typography.labelSmall,color=if(log.status=="FAILED") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+       }
+      }
+     }
+    }
+   }
+  }
  }
 }
 @Composable fun ResearchScreen(vm:OsintViewModel){

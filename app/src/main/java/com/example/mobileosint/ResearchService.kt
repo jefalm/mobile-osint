@@ -12,6 +12,8 @@ import java.util.Locale
 import java.util.UUID
 import com.google.gson.Gson
 import com.google.gson.JsonParser
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.ln
 
 data class ResearchFilters(val fromAt:Long?=null,val toAt:Long?=null,val sourceIds:Set<String> = emptySet(),val publishers:Set<String> = emptySet(),val topic:String="",val languages:Set<String> = setOf("pt","en","und"),val trendMinutes:Int=60)
@@ -343,15 +345,66 @@ class ResearchService(val db:AppDatabase,val settings:Settings,private val rss:F
  suspend fun setTags(id:String,value:String){require(value.length<=200&&'\n' !in value){"Tags must be one comma-separated line (up to 200 characters)"};db.withTransaction{val s=dao.source(id)?:return@withTransaction;dao.updateSource(s.copy(tags=value.split(',').map{it.trim()}.filter{it.isNotBlank()}.distinct().joinToString(", ")))}}
  suspend fun setAllFeedsEnabled(enabled:Boolean){ready.await();db.withTransaction{dao.setAllFetchEnabled(enabled)}}
  suspend fun deleteSource(id:String){db.withTransaction{dao.deleteSource(id)}}
- suspend fun cleanup(){val c=settings.config();db.withTransaction{dao.expire(Algorithms.cutoff(System.currentTimeMillis(),c.days));dao.cap(c.articleCap);dao.capReports();dao.capSeen()}}
+ data class CleanupResult(val expiredCount:Int=0,val prunedCount:Int=0)
+
+suspend fun cleanup():CleanupResult{
+ val c=settings.config()
+ var expired=0; var pruned=0
+ db.withTransaction{
+  expired=dao.expire(Algorithms.cutoff(System.currentTimeMillis(),c.days))
+  pruned=dao.cap(c.articleCap)
+  dao.capReports()
+  dao.capSeen()
+  dao.capSyncRuns()
+ }
+ return CleanupResult(expired,pruned)
+}
+ private fun emitSyncTelemetry(run:SyncRunEntity,logs:List<FeedSyncLogEntity>){
+  val summaryLine="[SYNC_RUN] status=${run.status}, duration=${run.durationMs}ms, feeds=${run.totalFeeds} (${run.successfulFeeds} ok, ${run.failedFeeds} failed), items: +${run.itemsAdded} added, ${run.itemsUpdated} updated, ${run.itemsExpired} expired, ${run.itemsPruned} pruned"
+  val jsonPayload=JSONObject().apply{
+   put("telemetry_type","sync_run")
+   put("run_id",run.id)
+   put("timestamp",run.timestamp)
+   put("duration_ms",run.durationMs)
+   put("total_feeds",run.totalFeeds)
+   put("successful_feeds",run.successfulFeeds)
+   put("failed_feeds",run.failedFeeds)
+   put("items_added",run.itemsAdded)
+   put("items_updated",run.itemsUpdated)
+   put("items_expired",run.itemsExpired)
+   put("items_pruned",run.itemsPruned)
+   put("status",run.status)
+   put("feeds",JSONArray(logs.map{log->
+    JSONObject().apply{
+     put("source_id",log.sourceId)
+     put("title",log.sourceTitle)
+     put("url",log.sourceUrl)
+     put("status",log.status)
+     put("parsed",log.itemsParsed)
+     put("added",log.itemsAdded)
+     put("updated",log.itemsUpdated)
+     put("expired",log.itemsExpired)
+     put("unchanged",log.itemsUnchanged)
+     put("error",log.errorMessage)
+     put("duration_ms",log.durationMs)
+    }
+   }))
+  }
+  Log.i("MobileOsintSyncTelemetry","$summaryLine\n$jsonPayload")
+ }
  suspend fun sync():Boolean=syncLock.withLock{
-  ready.await();val c=settings.config();cleanup();val active=dao.active();var successes=0;var completed=0;var failures=0
-  val started=System.nanoTime()
+  ready.await();val c=settings.config();val initialCleanup=cleanup();val active=dao.active();var successes=0;var completed=0;var failures=0
+  val runId=UUID.randomUUID().toString()
+  val startedNano=System.nanoTime()
+  val runTimestamp=System.currentTimeMillis()
+  val feedLogs=java.util.Collections.synchronizedList(mutableListOf<FeedSyncLogEntity>())
   try{
-  RefreshRunner.run(active,c.refreshConcurrency,{source->withContext(Dispatchers.IO){rss.fetch(source.url)}}){source,result->
+   RefreshRunner.run(active,c.refreshConcurrency,{source->withContext(Dispatchers.IO){rss.fetch(source.url)}}){source,result->
+    val feedStartNano=System.nanoTime()
+    val feedStartMs=System.currentTimeMillis()
     try{
      val feed=result.getOrThrow();val now=System.currentTimeMillis();val cutoff=Algorithms.cutoff(now,c.days)
-    val parsedCount=feed.items.size;val clippedCount=feed.items.count{it.contentType=="CLIPPED"};var expiredCount=0;var unchangedCount=0;var insertedCount=0;var updatedCount=0
+     val parsedCount=feed.items.size;val clippedCount=feed.items.count{it.contentType=="CLIPPED"};var expiredCount=0;var unchangedCount=0;var insertedCount=0;var updatedCount=0
      db.withTransaction{
       val current=dao.source(source.id)
       if(current==null||!sourceStillCurrent(current,source))return@withTransaction
@@ -366,7 +419,7 @@ class ResearchService(val db:AppDatabase,val settings:Settings,private val rss:F
         val generatedChunks=Algorithms.chunks(item.title+"\n"+item.text)
         Log.d("MobileOsintDiag","Article id=$id, length=${item.text.length}, type=${item.contentType}, chunks=${generatedChunks.size}")
         dao.putArticle(ArticleEntity(id,source.id,item.title,item.url,item.text,published,first,effective,hash,item.contentType,Algorithms.detectLanguage(item.title+" "+item.text)))
-          dao.deleteChunks(id)
+        dao.deleteChunks(id)
         dao.putChunks(generatedChunks.mapIndexed{i,text->ChunkEntity("$id:$i",id,text)})
        }
       }
@@ -379,16 +432,28 @@ class ResearchService(val db:AppDatabase,val settings:Settings,private val rss:F
       Log.d("MobileOsintDiag","Source ${source.id} status: $statusStr (parsed=$parsedCount, expired=$expiredCount, unchanged=$unchangedCount, inserted=$insertedCount, updated=$updatedCount)")
       val isOk=insertedCount>0||updatedCount>0||unchangedCount>0
       dao.updateSource(current.copy(lastAttempt=now,lastSuccess=if(isOk) now else current.lastSuccess,status=(statusStr+if(clippedCount>0)"; $clippedCount clipped" else ""),failures=if(isOk) 0 else current.failures+1));dao.cap(c.articleCap);dao.capSeen()
-     };if(insertedCount>0||updatedCount>0||unchangedCount>0) successes++
+     }
+     val isOk=insertedCount>0||updatedCount>0||unchangedCount>0
+     if(isOk) successes++
+     val feedDurationMs=(System.nanoTime()-feedStartNano)/1_000_000
+     val shortStatus=when{
+      parsedCount==0->"EMPTY_FEED"
+      insertedCount>0||updatedCount>0->"SUCCESS"
+      expiredCount==parsedCount->"ALL_EXPIRED"
+      else->"UNCHANGED"
+     }
+     feedLogs.add(FeedSyncLogEntity(UUID.randomUUID().toString(),runId,source.id,source.title,source.url,feedStartMs,shortStatus,parsedCount,insertedCount,updatedCount,expiredCount,unchangedCount,if(clippedCount>0)"$clippedCount items clipped" else "",feedDurationMs))
     }catch(e:CancellationException){throw e}catch(e:Exception){failures++
      Log.e("MobileOsintDiag","Sync failed for ${source.id}",e)
+     val feedDurationMs=(System.nanoTime()-feedStartNano)/1_000_000
+     val errStatus="${e.javaClass.simpleName}: ${e.message?:"Fetch failed"}".take(200)
      db.withTransaction{
       val s=dao.source(source.id)
       if(s!=null&&sourceStillCurrent(s,source)){
-       val errStatus="${e.javaClass.simpleName}: ${e.message?:"Fetch failed"}".take(200)
        dao.updateSource(s.copy(lastAttempt=System.currentTimeMillis(),status=errStatus,failures=s.failures+1))
       }
      }
+     feedLogs.add(FeedSyncLogEntity(UUID.randomUUID().toString(),runId,source.id,source.title,source.url,feedStartMs,"FAILED",0,0,0,0,0,errStatus,feedDurationMs))
     }finally{completed++;progress.value="Refreshed $completed/${active.size} feeds ($failures failed)"}
    }
    if(c.embeddings){val key=settings.apiKey();if(key.isNotBlank()){
@@ -396,9 +461,31 @@ class ResearchService(val db:AppDatabase,val settings:Settings,private val rss:F
     try{for(batch in dao.pending(Algorithms.cutoff(System.currentTimeMillis(),c.days),c.embeddingModel).chunked(16)){
      val vs=embed.embed(key,c.embeddingModel,batch.map{it.text})
      db.withTransaction{batch.forEachIndexed{i,ch->dao.vector(ch.id,Algorithms.encode(vs[i]),c.embeddingModel,Algorithms.cutoff(System.currentTimeMillis(),c.days))}}
-    }}catch(e:CancellationException){throw e}catch(e:Exception){progress.value="Feeds synced; embedding error: ${e.message}";return@withLock successes>0||active.isEmpty()}
+    }}catch(e:CancellationException){throw e}catch(e:Exception){progress.value="Feeds synced; embedding error: ${e.message}"}
    }}
-  cleanup();progress.value="Sync finished: $successes/${active.size} feeds, $failures failed, ${(System.nanoTime()-started)/1_000_000} ms";successes>0||active.isEmpty()
+   val postCleanup=cleanup()
+   val totalAdded=feedLogs.sumOf{it.itemsAdded}
+   val totalUpdated=feedLogs.sumOf{it.itemsUpdated}
+   val totalExpired=feedLogs.sumOf{it.itemsExpired}+initialCleanup.expiredCount+postCleanup.expiredCount
+   val totalPruned=initialCleanup.prunedCount+postCleanup.prunedCount
+   val runDurationMs=(System.nanoTime()-startedNano)/1_000_000
+   val runStatus=when{
+    active.isEmpty()->"SUCCESS"
+    failures==0->"SUCCESS"
+    successes>0->"PARTIAL"
+    else->"FAILED"
+   }
+   val syncRun=SyncRunEntity(runId,runTimestamp,runDurationMs,active.size,successes,failures,totalAdded,totalUpdated,totalExpired,totalPruned,runStatus)
+   runCatching{
+    db.withTransaction{
+     dao.addSyncRun(syncRun)
+     if(feedLogs.isNotEmpty())dao.addFeedSyncLogs(feedLogs)
+     dao.capSyncRuns()
+    }
+   }.onFailure{Log.e("MobileOsintDiag","Failed to persist sync run history",it)}
+   runCatching{emitSyncTelemetry(syncRun,feedLogs)}.onFailure{Log.e("MobileOsintDiag","Failed to emit sync telemetry",it)}
+   progress.value="Sync finished: $successes/${active.size} feeds, $failures failed, +$totalAdded added, $totalPruned pruned in $runDurationMs ms"
+   return successes>0||active.isEmpty()
   }finally{if(progress.value.startsWith("Refreshed")||progress.value.startsWith("Indexing"))progress.value="Sync stopped"}
  }
  suspend fun research(question:String,onUpdate:(String)->Unit,filters:ResearchFilters=ResearchFilters()):String{

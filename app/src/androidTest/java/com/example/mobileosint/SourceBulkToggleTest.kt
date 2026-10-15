@@ -56,6 +56,11 @@ class SourceBulkToggleTest {
    assertEquals(true, enabledB.research)
    assertEquals(2, enabledA.revision)
    assertEquals(2, enabledB.revision)
+
+   val latestRun = database.dao().latestSyncRun()
+   assertTrue(latestRun != null)
+   assertEquals("SUCCESS", latestRun!!.status)
+   assertEquals(0, latestRun.totalFeeds)
   } finally {
    database.close()
    context.deleteDatabase(databaseName)

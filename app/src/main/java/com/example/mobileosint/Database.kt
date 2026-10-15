@@ -16,6 +16,10 @@ data class SeenEntity(@PrimaryKey val id:String,val sourceId:String,val firstSee
 data class ReportEntity(@PrimaryKey val id:String,val question:String,val text:String="",val status:String="RUNNING",val requestedModel:String,val actualModel:String="",val createdAt:Long=System.currentTimeMillis(),val error:String="",val promptVersion:String="osint-v1")
 @Entity(tableName="evidence",foreignKeys=[ForeignKey(entity=ReportEntity::class,parentColumns=["id"],childColumns=["reportId"],onDelete=ForeignKey.CASCADE)],indices=[Index("reportId")])
 data class EvidenceEntity(@PrimaryKey val id:String,val reportId:String,val citation:Int,val title:String,val url:String,val source:String,val text:String,val publishedAt:Long?,val retrievedAt:Long,val contentHash:String,val contentType:String="UNKNOWN",val firstSeenAt:Long?=null)
+@Entity(tableName="sync_runs")
+data class SyncRunEntity(@PrimaryKey val id:String,val timestamp:Long,val durationMs:Long,val totalFeeds:Int,val successfulFeeds:Int,val failedFeeds:Int,val itemsAdded:Int,val itemsUpdated:Int,val itemsExpired:Int,val itemsPruned:Int,val status:String)
+@Entity(tableName="feed_sync_logs",foreignKeys=[ForeignKey(entity=SyncRunEntity::class,parentColumns=["id"],childColumns=["runId"],onDelete=ForeignKey.CASCADE)],indices=[Index("runId"),Index("sourceId")])
+data class FeedSyncLogEntity(@PrimaryKey val id:String,val runId:String,val sourceId:String,val sourceTitle:String,val sourceUrl:String,val timestamp:Long,val status:String,val itemsParsed:Int,val itemsAdded:Int,val itemsUpdated:Int,val itemsExpired:Int,val itemsUnchanged:Int,val errorMessage:String,val durationMs:Long)
 data class Candidate(val id:String,val articleId:String,val text:String,val embedding:ByteArray?,val embeddingModel:String,val title:String,val url:String,val source:String,val sourceId:String,val publishedAt:Long?,val hash:String,val contentType:String="UNKNOWN",val effectiveAt:Long=0,val firstSeenAt:Long=0,val language:String="und",val sourceUrl:String="",val tags:String="")
 data class Coverage(val articleCount:Int,val sourceCount:Int,val newestAt:Long?,val lastRefresh:Long?)
 data class TrendArticle(val id:String,val title:String,val url:String,val body:String,val publishedAt:Long?,val firstSeenAt:Long,val effectiveAt:Long,val source:String,val sourceId:String,val sourceUrl:String,val language:String="und")
@@ -42,9 +46,18 @@ data class TrendSourceRefresh(val id:String,val lastSuccess:Long)
  @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putArticle(a:ArticleEntity)
  @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putChunks(c:List<ChunkEntity>)
  @Query("DELETE FROM chunks WHERE articleId=:articleId") suspend fun deleteChunks(articleId:String)
- @Query("DELETE FROM articles WHERE effectiveAt < :cutoff") suspend fun expire(cutoff:Long)
- @Query("DELETE FROM articles WHERE id NOT IN (SELECT id FROM articles ORDER BY effectiveAt DESC,id LIMIT :cap)") suspend fun cap(cap:Int)
+ @Query("DELETE FROM articles WHERE effectiveAt < :cutoff") suspend fun expire(cutoff:Long):Int
+ @Query("DELETE FROM articles WHERE id NOT IN (SELECT id FROM articles ORDER BY effectiveAt DESC,id LIMIT :cap)") suspend fun cap(cap:Int):Int
  @Query("SELECT COUNT(*) FROM articles") fun count():Flow<Int>
+
+ @Insert suspend fun addSyncRun(run:SyncRunEntity)
+ @Insert suspend fun addFeedSyncLogs(logs:List<FeedSyncLogEntity>)
+ @Query("SELECT * FROM sync_runs ORDER BY timestamp DESC LIMIT :limit") fun recentSyncRuns(limit:Int=30):Flow<List<SyncRunEntity>>
+ @Query("SELECT * FROM sync_runs ORDER BY timestamp DESC LIMIT 1") fun latestSyncRunFlow():Flow<SyncRunEntity?>
+ @Query("SELECT * FROM sync_runs ORDER BY timestamp DESC LIMIT 1") suspend fun latestSyncRun():SyncRunEntity?
+ @Query("SELECT * FROM feed_sync_logs WHERE runId = :runId ORDER BY timestamp DESC") suspend fun feedLogsForRun(runId:String):List<FeedSyncLogEntity>
+ @Query("SELECT * FROM feed_sync_logs WHERE status LIKE 'FAILED%' OR errorMessage != '' ORDER BY timestamp DESC LIMIT 50") fun activeFeedFailures():Flow<List<FeedSyncLogEntity>>
+ @Query("DELETE FROM sync_runs WHERE id NOT IN (SELECT id FROM sync_runs ORDER BY timestamp DESC LIMIT 100)") suspend fun capSyncRuns()
  @Query("SELECT c.id,c.articleId,c.text,c.embedding,c.embeddingModel,a.title,a.url,s.title AS source,s.id AS sourceId,a.publishedAt,a.hash,a.contentType,a.effectiveAt,a.firstSeenAt,a.language,s.url AS sourceUrl,s.tags FROM chunks c JOIN articles a ON a.id=c.articleId JOIN sources s ON s.id=a.sourceId WHERE s.research=1 AND a.effectiveAt BETWEEN :fromAt AND :toAt AND (:allSources=1 OR s.id IN (:sourceIds)) AND a.language IN (:languages) AND (:topicPattern='' OR a.title LIKE :topicPattern ESCAPE '!' OR a.body LIKE :topicPattern ESCAPE '!' OR a.title LIKE :alternatePattern ESCAPE '!' OR a.body LIKE :alternatePattern ESCAPE '!') ORDER BY a.effectiveAt DESC,c.id LIMIT 4000") suspend fun candidates(fromAt:Long,toAt:Long,allSources:Boolean,sourceIds:List<String>,languages:List<String>,topicPattern:String,alternatePattern:String):List<Candidate>
  @Query("SELECT COUNT(DISTINCT a.id) AS articleCount,COUNT(DISTINCT CASE WHEN a.id IS NOT NULL THEN s.id END) AS sourceCount,MAX(a.effectiveAt) AS newestAt,MAX(s.lastSuccess) AS lastRefresh FROM sources s LEFT JOIN articles a ON a.sourceId=s.id AND a.effectiveAt BETWEEN :fromAt AND :toAt AND a.language IN (:languages) AND (:topicPattern='' OR a.title LIKE :topicPattern ESCAPE '!' OR a.body LIKE :topicPattern ESCAPE '!' OR a.title LIKE :alternatePattern ESCAPE '!' OR a.body LIKE :alternatePattern ESCAPE '!') WHERE s.research=1 AND (:allSources=1 OR s.id IN (:sourceIds))") suspend fun coverage(fromAt:Long,toAt:Long,allSources:Boolean,sourceIds:List<String>,languages:List<String>,topicPattern:String,alternatePattern:String):Coverage
  @Query("SELECT a.id,a.title,a.url,a.body,a.publishedAt,a.firstSeenAt,a.effectiveAt,a.language,s.title AS source,s.id AS sourceId,s.url AS sourceUrl FROM articles a JOIN sources s ON a.sourceId=s.id WHERE s.research=1 AND a.effectiveAt>:fromAt AND a.effectiveAt<=:toAt AND (:allSources=1 OR s.id IN (:sourceIds)) AND a.language IN (:languages) AND (:topicPattern='' OR a.title LIKE :topicPattern ESCAPE '!' OR a.body LIKE :topicPattern ESCAPE '!' OR a.title LIKE :alternatePattern ESCAPE '!' OR a.body LIKE :alternatePattern ESCAPE '!') ORDER BY a.effectiveAt DESC,a.id LIMIT 5000") suspend fun trendArticles(fromAt:Long,toAt:Long,allSources:Boolean,sourceIds:List<String>,languages:List<String>,topicPattern:String,alternatePattern:String):List<TrendArticle>
@@ -62,7 +75,7 @@ data class TrendSourceRefresh(val id:String,val lastSuccess:Long)
  @Query("DELETE FROM reports WHERE id NOT IN (SELECT id FROM reports ORDER BY createdAt DESC LIMIT 100) AND status!='RUNNING'") suspend fun capReports()
  @Query("UPDATE reports SET status='PARTIAL',error='App process ended before completion' WHERE status='RUNNING'") suspend fun recover()
 }
-@Database(entities=[SourceEntity::class,ArticleEntity::class,ChunkEntity::class,ReportEntity::class,EvidenceEntity::class,SeenEntity::class],version=4,exportSchema=true)
+@Database(entities=[SourceEntity::class,ArticleEntity::class,ChunkEntity::class,ReportEntity::class,EvidenceEntity::class,SeenEntity::class,SyncRunEntity::class,FeedSyncLogEntity::class],version=5,exportSchema=true)
 abstract class AppDatabase:RoomDatabase(){abstract fun dao():OsintDao
  companion object{
   val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -82,7 +95,49 @@ abstract class AppDatabase:RoomDatabase(){abstract fun dao():OsintDao
     db.execSQL("ALTER TABLE articles ADD COLUMN language TEXT NOT NULL DEFAULT 'und'")
    }
   }
+  val MIGRATION_4_5 = object : Migration(4, 5) {
+   override fun migrate(db: SupportSQLiteDatabase) {
+    db.execSQL("""
+     CREATE TABLE IF NOT EXISTS `sync_runs` (
+      `id` TEXT NOT NULL,
+      `timestamp` INTEGER NOT NULL,
+      `durationMs` INTEGER NOT NULL,
+      `totalFeeds` INTEGER NOT NULL,
+      `successfulFeeds` INTEGER NOT NULL,
+      `failedFeeds` INTEGER NOT NULL,
+      `itemsAdded` INTEGER NOT NULL,
+      `itemsUpdated` INTEGER NOT NULL,
+      `itemsExpired` INTEGER NOT NULL,
+      `itemsPruned` INTEGER NOT NULL,
+      `status` TEXT NOT NULL,
+      PRIMARY KEY(`id`)
+     )
+    """.trimIndent())
+    db.execSQL("""
+     CREATE TABLE IF NOT EXISTS `feed_sync_logs` (
+      `id` TEXT NOT NULL,
+      `runId` TEXT NOT NULL,
+      `sourceId` TEXT NOT NULL,
+      `sourceTitle` TEXT NOT NULL,
+      `sourceUrl` TEXT NOT NULL,
+      `timestamp` INTEGER NOT NULL,
+      `status` TEXT NOT NULL,
+      `itemsParsed` INTEGER NOT NULL,
+      `itemsAdded` INTEGER NOT NULL,
+      `itemsUpdated` INTEGER NOT NULL,
+      `itemsExpired` INTEGER NOT NULL,
+      `itemsUnchanged` INTEGER NOT NULL,
+      `errorMessage` TEXT NOT NULL,
+      `durationMs` INTEGER NOT NULL,
+      PRIMARY KEY(`id`),
+      FOREIGN KEY(`runId`) REFERENCES `sync_runs`(`id`) ON DELETE CASCADE
+     )
+    """.trimIndent())
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_feed_sync_logs_runId` ON `feed_sync_logs` (`runId`)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_feed_sync_logs_sourceId` ON `feed_sync_logs` (`sourceId`)")
+   }
+  }
   fun create(c:Context)=Room.databaseBuilder(c,AppDatabase::class.java,"osint.db")
-   .addMigrations(MIGRATION_1_2,MIGRATION_2_3,MIGRATION_3_4)
+   .addMigrations(MIGRATION_1_2,MIGRATION_2_3,MIGRATION_3_4,MIGRATION_4_5)
    .build()
  }}
