@@ -787,4 +787,196 @@ class AlgorithmsTest {
   val countryTerms=KeywordTrends.terms(countryArticle)
   assertFalse("us" in countryTerms)
  }
+
+ @Test fun portugueseGenericStandaloneTermsNeverBecomeTopicsOnFrequencyAlone(){
+  val current=buildList{
+   repeat(20){index->add(trendArticle("parte-$index","Parte",body="Alpha$index Beta$index",host="outlet$index.example",language="pt"))}
+   for(index in 1..3)add(trendArticle("escala-$index","Escala 6x1",host="escala$index.example",language="pt"))
+  }
+  val previous=buildList{
+   repeat(10){index->add(trendArticle("old-parte-$index","Parte",body="Gama$index Delta$index",host="outlet$index.example",language="pt"))}
+   add(trendArticle("old-escala","Escala 6x1",host="escala1.example",language="pt"))
+  }
+  val result=KeywordTrends.analyze(current,previous,TrendFeedHealth(23,0,1_000_000L),0L,1_000_000L,"pt")
+  assertFalse("parte",KeywordTrends.terms(current[0]).containsKey("parte"))
+  assertFalse("parte",result.report.keywords.any{it.key=="parte"})
+  assertTrue("escala 6x1",result.report.keywords.any{it.key=="escala 6x1"})
+ }
+
+ @Test fun portuguesePhrasesKeepGenericComponentsWhileNamedEntitiesRemainEligible(){
+  val phraseTerms=KeywordTrends.terms(trendArticle("phrase","Caso do hospital",language="pt"))
+  assertFalse("caso",phraseTerms.containsKey("caso"))
+  assertTrue("caso do hospital",phraseTerms.containsKey("caso do hospital"))
+  val agreement=KeywordTrends.terms(trendArticle("agreement","Parte do acordo",language="pt"))
+  assertFalse("parte",agreement.containsKey("parte"))
+  assertTrue("parte do acordo",agreement.containsKey("parte do acordo"))
+  val current=(1..3).map{index->trendArticle("bc-$index","Banco Central",host="bc$index.example",language="pt")}
+  val result=KeywordTrends.analyze(current,current,TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"pt")
+  assertEquals("Banco Central",KeywordTrends.terms(current[0])["banco central"])
+  assertTrue(result.report.keywords.any{it.key=="banco central"})
+ }
+
+ @Test fun accentedAndUnaccentedPortugueseNormalizeToOneCandidate(){
+  val plain=KeywordTrends.terms(trendArticle("plain","Inteligencia artificial avanca",language="pt"))
+  val accented=KeywordTrends.terms(trendArticle("accented","Inteligência Artificial avança",language="pt"))
+  assertEquals(plain.keys,accented.keys)
+  assertEquals("Inteligência Artificial",accented["inteligencia artificial"])
+  val elections=KeywordTrends.terms(trendArticle("elections","Eleições municipais",language="pt"))
+  assertFalse(elections.containsKey("eleicoes"))
+  assertTrue(elections.containsKey("eleicoes municipais"))
+ }
+
+ @Test fun englishGenericStandaloneTermsNeverBecomeTopicsOnFrequencyAlone(){
+  val genericTerms=KeywordTrends.terms(trendArticle("generic","Part of deal",language="en"))
+  assertFalse("part",genericTerms.containsKey("part"))
+  assertFalse("deal",genericTerms.containsKey("deal"))
+  assertTrue("part of deal",genericTerms.containsKey("part of deal"))
+  val current=buildList{
+   repeat(20){index->add(trendArticle("part-$index","Part",body="Alpha$index Case Beta$index",host="outlet$index.example",language="en"))}
+   for(index in 1..3)add(trendArticle("phrase-$index","Interest rate cuts",host="phrase$index.example",language="en"))
+  }
+  val previous=buildList{
+   repeat(10){index->add(trendArticle("old-part-$index","Part",body="Gama$index Case Delta$index",host="outlet$index.example",language="en"))}
+   add(trendArticle("old-phrase","Interest rate cuts",host="phrase1.example",language="en"))
+  }
+  val result=KeywordTrends.analyze(current,previous,TrendFeedHealth(24,0,1_000_000L),0L,1_000_000L,"en")
+  assertFalse("part or case card: ${result.report.keywords.map{it.key}}",result.report.keywords.any{it.key=="part"||it.key=="case"})
+  assertTrue("phrase card: ${result.report.keywords.map{it.key}}",result.report.keywords.any{it.key=="interest rate cuts"})
+ }
+
+ @Test fun englishPhrasesEntitiesAndCaseVariantsStayEligible(){
+  val terms=KeywordTrends.terms(trendArticle("phrases","Interest rate cuts and Middle East conflict deepen at the Federal Reserve",language="en"))
+  assertTrue("interest rate cuts",terms.containsKey("interest rate cuts"))
+  assertTrue("middle east conflict",terms.containsKey("middle east conflict"))
+  assertTrue("federal reserve",terms.containsKey("federal reserve"))
+  val mixed=KeywordTrends.terms(trendArticle("mixed","Interest Rate capped while interest rate rose",language="en"))
+  assertEquals(1,mixed.keys.count{it=="interest rate"})
+  assertEquals("Interest Rate",mixed["interest rate"])
+  assertEquals("Nvidia",KeywordTrends.terms(trendArticle("entity","Nvidia and GPT-6 in Nvidia data centre",language="en"))["nvidia"])
+ }
+
+ @Test fun bothFilterAppliesLanguageSpecificGenericVocabulary(){
+  val ambiguousTerms=KeywordTrends.terms(trendArticle("und","Parte do caso e part of the case",language="und"))
+  for(term in listOf("parte","caso","part","case"))assertFalse(term,ambiguousTerms.containsKey(term))
+  val portuguese=KeywordTrends.terms(trendArticle("pt","Parte do caso segue para julgamento",language="pt"))
+  assertFalse("parte",portuguese.containsKey("parte"))
+  assertFalse("caso",portuguese.containsKey("caso"))
+  assertTrue("caso judicial",KeywordTrends.terms(trendArticle("pt2","Caso judicial avança",language="pt")).containsKey("caso judicial"))
+  val english=KeywordTrends.terms(trendArticle("en","Part of the case closed",language="en"))
+  assertFalse("part",english.containsKey("part"))
+  assertFalse("case",english.containsKey("case"))
+ }
+
+ @Test fun curatedMultilingualEquivalentsGroupAsVariationsKeepingLabels(){
+  val current=buildList{
+   for(index in 1..3)add(trendArticle("clima-$index","Clima",host="pt$index.example",language="pt"))
+   for(index in 1..3)add(trendArticle("climate-$index","Climate",host="en$index.example",language="en"))
+  }
+  val card=KeywordTrends.analyze(current,current,TrendFeedHealth(6,0,1_000_000L),0L,1_000_000L,"pt,en,und").report.keywords.first{it.key=="clima"}
+  assertEquals(6,card.currentArticles)
+  assertEquals(6,card.currentPublishers)
+  assertEquals("Clima",card.label)
+  assertEquals(listOf("Climate"),card.variations)
+  val unrelated=KeywordTrends.analyze(
+   listOf(trendArticle("energia-1","Energia",host="pt1.example",language="pt"),trendArticle("energia-2","Energia",host="pt2.example",language="pt"),trendArticle("tech-1","Technology",host="en1.example",language="en"),trendArticle("tech-2","Technology",host="en2.example",language="en")),
+   emptyList(),TrendFeedHealth(4,0,1_000_000L),0L,1_000_000L,"pt,en,und")
+  assertTrue(unrelated.report.keywords.any{it.key=="energia"})
+  assertTrue(unrelated.report.keywords.any{it.key=="technology"})
+ }
+
+ @Test fun smallCountRiseAndMissingDatesCannotClaimAVerifiedTrend(){
+  val small=KeywordTrends.analyze(
+   listOf(trendArticle("a","Escala 6x1",host="one.example"),trendArticle("b","Escala 6x1",host="two.example"),trendArticle("c","Panorama",host="three.example")),
+   listOf(trendArticle("d","Escala 6x1",host="one.example"),trendArticle("e","Escala 6x1",host="two.example"),trendArticle("f","Escala 6x1",host="three.example"),trendArticle("g","Panorama",host="four.example")),
+   TrendFeedHealth(4,0,1_000_000L),0L,1_000_000L,"pt")
+  val smallCard=small.report.keywords.first{it.key=="escala 6x1"}
+  assertEquals(2,smallCard.currentArticles)
+  assertEquals(3,smallCard.previousArticles)
+  assertTrue(smallCard.status.contains("insufficient current coverage"))
+  val undated=KeywordTrends.analyze(
+   listOf(trendArticle("a","Escala 6x1",host="one.example",publishedAt=null),trendArticle("b","Escala 6x1",host="two.example"),trendArticle("c","Escala 6x1",host="three.example"),trendArticle("d","Escala 6x1",host="four.example")),
+   listOf(trendArticle("e","Escala 6x1",host="one.example"),trendArticle("f","Escala 6x1",host="two.example"),trendArticle("g","Escala 6x1",host="three.example")),
+   TrendFeedHealth(4,0,1_000_000L),0L,1_000_000L,"pt")
+  val undatedCard=undated.report.keywords.first{it.key=="escala 6x1"}
+  assertTrue(undatedCard.status.contains("publication dates missing; no verified trend"))
+  assertFalse(undatedCard.status.contains("increase in indexed coverage"))
+  assertTrue(undated.text.contains("without publication dates"))
+ }
+
+ @Test fun unequalWindowsCannotProduceAnUnsupportedIncrease(){
+  val volume=KeywordTrends.analyze(
+   buildList{
+    for(index in 1..6)add(trendArticle("topic-$index","Escala 6x1",host="topic$index.example"))
+    for(index in 1..24)add(trendArticle("filler-$index","Panorama",host="filler$index.example"))
+   },
+   listOf(trendArticle("old-topic-1","Escala 6x1",host="topic1.example"),trendArticle("old-topic-2","Escala 6x1",host="topic2.example"),trendArticle("old-filler","Panorama",host="filler1.example")),
+   TrendFeedHealth(31,0,1_000_000L),0L,1_000_000L,"pt")
+  val volumeCard=volume.report.keywords.first{it.key=="escala 6x1"}
+  assertEquals(6,volumeCard.currentArticles)
+  assertEquals(2,volumeCard.previousArticles)
+  assertFalse(volumeCard.status.contains("increase in indexed coverage"))
+  assertTrue(volumeCard.status.contains("no verified trend"))
+  val comparable=KeywordTrends.analyze(
+   buildList{
+    for(index in 1..6)add(trendArticle("topic-$index","Escala 6x1",host="topic$index.example"))
+    for(index in 1..6)add(trendArticle("filler-$index","Panorama",host="filler$index.example"))
+   },
+   buildList{
+    for(index in 1..3)add(trendArticle("old-topic-$index","Escala 6x1",host="oldtopic$index.example"))
+    for(index in 1..9)add(trendArticle("old-filler-$index","Panorama",host="oldfiller$index.example"))
+   },
+   TrendFeedHealth(24,0,1_000_000L),0L,1_000_000L,"pt")
+  assertEquals("increase in indexed coverage",comparable.report.keywords.first{it.key=="escala 6x1"}.status)
+ }
+
+ @Test fun duplicateArticlesFromOneHostAreNotIndependentConfirmation(){
+  val current=(1..3).map{index->trendArticle("a$index","Escala 6x1",host="same.example")}
+  val previous=(1..3).map{index->trendArticle("b$index","Escala 6x1",host="old$index.example")}
+  val card=KeywordTrends.analyze(current,previous,TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"pt").report.keywords.first{it.key=="escala 6x1"}
+  assertEquals(3,card.currentArticles)
+  assertEquals(1,card.currentPublishers)
+  assertFalse(card.status.contains("increase in indexed coverage"))
+ }
+
+ @Test fun incompleteIngestionKeepsCandidatesButBlocksVerifiedTrends(){
+  val current=(1..4).map{index->trendArticle("a$index","Escala 6x1",host="new$index.example")}
+  val previous=(1..3).map{index->trendArticle("b$index","Escala 6x1",host="old$index.example")}
+  val result=KeywordTrends.analyze(current,previous,TrendFeedHealth(7,0,1_000_000L),0L,1_000_000L,"pt",false)
+  val card=result.report.keywords.first{it.key=="escala 6x1"}
+  assertEquals("sparse baseline; no verified trend",card.status)
+  assertTrue("informative candidates stay visible",card.supports.isNotEmpty())
+  assertTrue(result.text.contains("Sparse baseline"))
+ }
+
+ @Test fun informativeTopicStaysVisibleWithoutAVerifiedIncrease(){
+  val current=buildList{
+   for(index in 1..5)add(trendArticle("topic$index","Escala 6x1",host="host${index%3}.example"))
+   for(index in 1..5)add(trendArticle("other$index","Panorama",host="other$index.example"))
+  }
+  val previous=buildList{
+   for(index in 1..5)add(trendArticle("oldtopic$index","Escala 6x1",host="old${index%3}.example"))
+   for(index in 1..5)add(trendArticle("oldother$index","Panorama",host="oldother$index.example"))
+  }
+  val result=KeywordTrends.analyze(current,previous,TrendFeedHealth(10,0,1_000_000L),0L,1_000_000L,"pt")
+  val card=result.report.keywords.first{it.key=="escala 6x1"}
+  assertEquals(5,card.currentArticles)
+  assertEquals(3,card.currentPublishers)
+  assertEquals("no supported increase",card.status)
+  assertTrue(card.supports.isNotEmpty())
+  assertTrue(result.text.contains("Escala 6x1: 5 articles / 3 publishers"))
+ }
+
+ @Test fun trendReportsUseOnlyTheFilteredEligiblePopulation(){
+  val sources=listOf(SourceEntity("a","https://www.paper.example/rss","A"),SourceEntity("b","https://paper.example/atom","B"),SourceEntity("c","https://other.example/rss","C"))
+  assertEquals(listOf("a","b"),LocalRetriever.selectedSourceIds(sources,ResearchFilters(publishers=setOf("paper.example"))))
+  assertEquals(listOf("c"),LocalRetriever.selectedSourceIds(sources,ResearchFilters(sourceIds=setOf("a","c"),publishers=setOf("other.example"))))
+  val current=(1..3).map{index->trendArticle("a$index","Escala 6x1 avança",host="filter$index.example")}
+  val window=KeywordTrends.window(10_000_000L,0L,ResearchFilters(languages=setOf("pt")))
+  assertEquals(3_600_000L,window.end-window.start)
+  val report=KeywordTrends.analyze(current,current,TrendFeedHealth(3,0,1_000_000L),window.start,window.end,"languages=pt").report
+  assertEquals(3,report.currentArticles)
+  assertEquals(3,report.currentPublishers)
+  assertEquals(3,report.previousArticles)
+  assertEquals("languages=pt",report.filters)
+ }
 }

@@ -73,16 +73,24 @@ object KeywordTrends {
  private val feedPrefix=Regex("(?i)^\\s*arxiv:\\S+\\s+announce type:\\s*\\w+\\s+abstract:\\s*")
  private val word=Regex("[\\p{L}\\p{N}]+(?:-[\\p{L}\\p{N}]+)*")
  private val phraseOnlyTerms=setOf("access", "according", "administration", "against", "ahead", "amid", "announced", "appeared", "attacks", "authorities", "back", "being", "between", "big", "campaign", "chief", "children", "city", "company", "country", "court", "data", "day", "days", "deal", "development", "dois", "down", "during", "election", "elementary", "end", "federal", "fire", "former", "future", "game", "global", "government", "group", "hit", "home", "including", "killed", "last", "leaders", "least", "life", "made", "major", "make", "man", "market", "media", "midterm", "military", "million", "month", "near", "next", "night", "off", "officials", "oil", "party", "people", "pessoas", "police", "political", "president", "press", "prices", "rio", "school", "season", "secretary", "series", "set", "shooter", "shooting", "show", "since", "state", "still", "support", "take", "three", "time", "times", "told", "two", "vida", "voters", "war", "win", "world").map(::key).toSet()
+ /** Portuguese equivalents of the background terms above, so both languages are filtered equivalently; standalone use only. */
+ private val portuguesePhraseOnlyTerms=phraseOnlyTerms+setOf("acesso","acordo","agora","anuncio","anuncios","ataque","ataques","autoridade","autoridades","assunto","assuntos","base","bases","campanha","caso","casos","cidade","cidades","coisa","coisas","conta","contas","crianca","criancas","dado","dados","desenvolvimento","eleicao","eleicoes","eleitor","eleitores","empresa","empresas","escola","estado","estados","fato","fatos","forma","formas","frente","frentes","futuro","gente","governo","grande","grandes","grupo","guerra","homem","imprensa","incendio","incendios","lado","lados","lider","lideres","maior","maiores","mercado","menor","menores","mes","meses","meio","midia","militar","militares","milhao","milhoes","momento","momentos","mundo","noite","nome","nomes","numero","numeros","ontem","pais","paises","parte","partes","partido","petroleo","policia","ponto","pontos","prazo","prazos","preco","precos","primeira","primeiro","secretario","semana","semanas","temporada","tempo","tipo","tipos","tribunal","ultima","ultimas","ultimo","ultimos","valor","valores","vez","vezes","vitoria","vitorias").map(::key).toSet()
+ /** English generic vocabulary that stays available inside phrases but must not become a topic on frequency alone. */
+ private val englishPhraseOnlyTerms=phraseOnlyTerms+setOf("part","parts","case","cases","thing","things","way","ways","issue","issues","question","questions","subject","subjects","many","several","various","number","numbers").map(::key).toSet()
+ private val ambiguousPhraseOnlyTerms=englishPhraseOnlyTerms+portuguesePhraseOnlyTerms
+ /** A known language uses its own generic vocabulary; an ambiguous one keeps both, like the existing stopword convention. */
+ private fun phraseOnly(language:String)=when(language){"pt"->portuguesePhraseOnlyTerms;"en"->englishPhraseOnlyTerms;else->ambiguousPhraseOnlyTerms}
  private fun key(value:String)=Normalizer.normalize(value.trim().lowercase(Locale.ROOT),Normalizer.Form.NFD).replace(Regex("\\p{M}+"),"")
   private fun clean(value:String)=value.replace(feedPrefix,"").replace(urls," ").replace(markup," ").replace(boilerplate,".")
  internal fun terms(article:TrendArticle):Map<String,String>{
   val result=linkedMapOf<String,String>()
+  val standaloneOnly=phraseOnly(article.language)
   fun allowed(value:String)=allowedToken(value,article.language)
   fun collect(text:String){
    val matches=word.findAll(text).toList()
   matches.forEach{match->
    val token=match.value.trim()
-    if(allowed(token)&&key(token) !in phraseOnlyTerms)result.putIfAbsent(key(token),token)
+    if(allowed(token)&&key(token) !in standaloneOnly)result.putIfAbsent(key(token),token)
   }
   for(size in 2..minOf(3,matches.size))for(index in 0..matches.size-size){
     val group=matches.subList(index,index+size)
@@ -120,9 +128,15 @@ object KeywordTrends {
  }
  private fun keyWords(value:String)=key(value).split(Regex("\\s+")).filter{it.isNotBlank()}
  private fun meaningfulKeyWords(value:String)=keyWords(value).filter{it.length>=3&&it !in englishStop&&it !in portugueseStop&&it !in noise}
+ /** Related candidates group as variations: a shared meaningful word between two phrases, or a curated multilingual synonym pair (labels are kept). */
  internal fun overlappingPhrases(first:String,second:String):Boolean{
   val firstWords=meaningfulKeyWords(first);val secondWords=meaningfulKeyWords(second)
-  return firstWords.size>1&&secondWords.size>1&&firstWords.any{it in secondWords}
+  return firstWords.size>1&&secondWords.size>1&&firstWords.any{it in secondWords}||aliasEquivalent(first,second)
+ }
+ /** Multilingual equivalence comes only from the app's curated synonym table, never from string similarity; labels stay untouched. */
+ private fun aliasEquivalent(first:String,second:String):Boolean{
+  val firstWords=keyWords(first);val secondWords=keyWords(second)
+  return firstWords.size==1&&secondWords.size==1&&firstWords.first()!=secondWords.first()&&Algorithms.aliases(firstWords.first()).toSet()==Algorithms.aliases(secondWords.first()).toSet()
  }
  private fun excerpt(article:TrendArticle,term:String):String{
   if(term in terms(article.copy(body="")))return article.title
@@ -229,12 +243,16 @@ object KeywordTrends {
    val currentPublishers=publisherCount(currentArticles);val previousPublishers=publisherCount(previousArticles)
    val missingDates=currentArticles.any{it.publishedAt==null}||previousArticles.any{it.publishedAt==null}
   val staleRelevant=stale&&(sourceRefresh.isEmpty()||(currentArticles+previousArticles).any{(sourceRefresh[it.sourceId]?:Long.MIN_VALUE)<start})
+   val countRise=currentArticles.size>previousArticles.size&&currentPublishers>=previousPublishers
+   /** A verified increase needs a larger share of the eligible articles, not only a larger count in a larger window. */
+   val shareRise=countRise&&earlier.isNotEmpty()&&currentArticles.size.toLong()*earlier.size>previousArticles.size.toLong()*recent.size
    val status=when{
     baselineSparse||previousArticles.size<2||previousPublishers<2->"sparse baseline; no verified trend"
   staleRelevant->"stale feed coverage; no verified trend (supporting sources stale)"
     missingDates->"publication dates missing; no verified trend"
     currentArticles.size<3||currentPublishers<2->"insufficient current coverage"
-   currentArticles.size>previousArticles.size&&currentPublishers>=previousPublishers->if(stale)"increase in indexed coverage among refreshed supporting feeds; wider coverage uncertain" else "increase in indexed coverage"
+   shareRise->if(stale)"increase in indexed coverage among refreshed supporting feeds; wider coverage uncertain" else "increase in indexed coverage"
+   countRise->"more articles than the previous window but no larger share of eligible articles; no verified trend"
     else->"no supported increase"
    }
   val label=terms(articles.first())[term]?:term
