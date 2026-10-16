@@ -27,6 +27,12 @@ data class TrendSupport(val title:String,val url:String,val publisher:String,val
 data class TrendKeyword(val key:String,val label:String,val currentArticles:Int,val currentPublishers:Int,val previousArticles:Int,val previousPublishers:Int,val status:String,val supports:List<TrendSupport>,val variations:List<String>?=null)
 data class KeywordReport(val kind:String="keyword-trends-v2",val start:Long,val end:Long,val previousStart:Long,val currentArticles:Int,val currentPublishers:Int,val currentUndated:Int,val previousArticles:Int,val previousPublishers:Int,val previousUndated:Int,val staleFeeds:Int,val sourceCount:Int,val lastRefresh:Long?,val baselineSparse:Boolean,val filters:String,val keywords:List<TrendKeyword>)
 data class TrendSummary(val text:String,val diagnostics:String,val supporting:List<TrendArticle>,val report:KeywordReport)
+data class TrendScoreDiagnostic(val articleFrequency:Int,val articleCount:Int,val idf:Double,val coverageBonus:Double,val phraseWeight:Double,val acronymWeight:Double,val total:Double)
+data class RelatedTrendPhraseDiagnostic(val key:String,val displayTerm:String?,val supportArticleIds:List<String>,val previousSupportArticleIds:List<String>,val score:TrendScoreDiagnostic,val candidateEligible:Boolean,val candidateExclusionReason:String?,val candidateRank:Int?,val selectionReason:String?,val selectedRank:Int?,val finalCardRank:Int?,val variationOf:String?)
+data class StandaloneTrendDiagnostic(val key:String,val displayTerm:String?,val candidateGenerated:Boolean,val candidateExclusionReason:String?,val supportArticleIds:List<String>,val previousSupportArticleIds:List<String>,val score:TrendScoreDiagnostic?,val candidateRank:Int?,val selectionReason:String?,val selectedRank:Int?,val finalCardRank:Int?,val selectionOutcome:String,val removedByStandaloneDuplicates:Boolean,val duplicatePhraseKeys:List<String>,val relatedPhrases:List<RelatedTrendPhraseDiagnostic>)
+data class TrendInputArticleDiagnostic(val articleId:String,val effectiveAt:Long,val publishedAt:Long?,val firstSeenAt:Long,val sourceId:String,val researchEligible:Boolean)
+data class TrendInputProvenance(val start:Long,val end:Long,val previousStart:Long,val baselineComplete:Boolean,val languages:List<String>,val allSources:Boolean,val selectedSourceIds:List<String>,val sourceFilterIds:List<String>,val publisherFilters:List<String>,val topicFilter:String,val topicPattern:String,val alternateTopicPattern:String,val researchEligibleSourceScope:Boolean,val current:List<TrendInputArticleDiagnostic>,val preceding:List<TrendInputArticleDiagnostic>)
+data class TrendRunDiagnostic(val provenance:TrendInputProvenance,val terms:List<StandaloneTrendDiagnostic>)
 object KeywordReportCodec {
  private val gson=Gson()
  fun encode(report:KeywordReport):String=gson.toJson(report)
@@ -39,6 +45,13 @@ object KeywordReportCodec {
 }
 
 object KeywordTrends {
+ /** Optional debug hook for inspecting the real trend inputs. Null by default; emits IDs and scores, never article text. */
+ @Volatile var standaloneDiagnosticSink:((List<StandaloneTrendDiagnostic>)->Unit)?=null
+ internal fun inputProvenance(start:Long,end:Long,previousStart:Long,baselineComplete:Boolean,languages:List<String>,allSources:Boolean,selectedSourceIds:List<String>,filters:ResearchFilters,topicPattern:String,alternateTopicPattern:String,current:List<TrendArticle>,previous:List<TrendArticle>)=TrendInputProvenance(
+  start,end,previousStart,baselineComplete,languages.distinct().sorted(),allSources,selectedSourceIds.distinct().sorted(),filters.sourceIds.sorted(),filters.publishers.sorted(),filters.topic,topicPattern,alternateTopicPattern,true,
+  current.map{TrendInputArticleDiagnostic(it.id,it.effectiveAt,it.publishedAt,it.firstSeenAt,it.sourceId,true)},
+  previous.map{TrendInputArticleDiagnostic(it.id,it.effectiveAt,it.publishedAt,it.firstSeenAt,it.sourceId,true)}
+ )
  data class Window(val start:Long,val end:Long,val precedingStart:Long,val baselineComplete:Boolean)
  fun window(now:Long,retentionStart:Long,filters:ResearchFilters):Window{
   require(filters.trendMinutes in 15..1440){"Trend window must be 15-1440 minutes."}
@@ -127,7 +140,7 @@ object KeywordTrends {
  private fun index(articles:List<TrendArticle>):Map<String,List<TrendArticle>> =
   articles.flatMap{article->terms(article).keys.map{it to article}}.groupBy({it.first},{it.second})
  private fun publisherCount(articles:List<TrendArticle>)=articles.mapNotNull(::publisher).distinct().size
- fun analyze(current:List<TrendArticle>,previous:List<TrendArticle>,health:TrendFeedHealth,start:Long,end:Long,filters:String,baselineComplete:Boolean=true,sourceRefresh:Map<String,Long> = emptyMap()):TrendSummary{
+   fun analyze(current:List<TrendArticle>,previous:List<TrendArticle>,health:TrendFeedHealth,start:Long,end:Long,filters:String,baselineComplete:Boolean=true,sourceRefresh:Map<String,Long> = emptyMap(),diagnosticCapture:((List<StandaloneTrendDiagnostic>)->Unit)?=null):TrendSummary{
   val recent=current.distinctBy{it.id};val earlier=previous.distinctBy{it.id}
   val currentIndex=index(recent);val previousIndex=index(earlier)
   val undatedRecent=recent.count{it.publishedAt==null};val undatedEarlier=earlier.count{it.publishedAt==null}
@@ -142,7 +155,7 @@ object KeywordTrends {
   if(stale)lines.add("Stale or unrefreshed feed coverage: apparent increases may reflect ingestion timing, not news activity.")
   val ranked=mutableListOf<Map.Entry<String,List<TrendArticle>>>()
   val repeated=currentIndex.values.any{it.size>=2&&publisherCount(it)>=2}
-  fun score(entry:Map.Entry<String,List<TrendArticle>>):Double{
+  fun scoreComponents(entry:Map.Entry<String,List<TrendArticle>>):TrendScoreDiagnostic{
    val documents=recent.size.toDouble();val frequency=entry.value.size.toDouble()
    val idf=ln(1.0+(documents-frequency+0.5)/(frequency+0.5))
    val words=entry.key.split(' ')
@@ -151,22 +164,34 @@ object KeywordTrends {
     val expected=endpoints.fold(documents){estimate,token->estimate*(currentIndex[token]?.size?:0)/documents}
     1.1+ln((frequency/expected.coerceAtLeast(1.0)).coerceAtLeast(1.0)).coerceAtMost(1.0)
    }
-  val acronymWeight=if(entry.key in setOf("us","eu","ia","df"))1.25 else 1.0
-  return (frequency*idf+if(documents<5)frequency*0.6 else 0.0)*phraseWeight*acronymWeight
+   val coverageBonus=if(documents<5)frequency*0.6 else 0.0
+   val acronymWeight=if(entry.key in setOf("us","eu","ia","df"))1.25 else 1.0
+   val total=(frequency*idf+coverageBonus)*phraseWeight*acronymWeight
+   return TrendScoreDiagnostic(frequency.toInt(),recent.size,idf,coverageBonus,phraseWeight,acronymWeight,total)
   }
+  val scoreCache=mutableMapOf<String,TrendScoreDiagnostic>()
+  fun components(entry:Map.Entry<String,List<TrendArticle>>)=scoreCache.getOrPut(entry.key){scoreComponents(entry)}
+  fun score(entry:Map.Entry<String,List<TrendArticle>>)=components(entry).total
    val candidates=currentIndex.entries.filter{!repeated||it.value.size>=2&&publisherCount(it.value)>=2}
     .sortedWith(compareByDescending<Map.Entry<String,List<TrendArticle>>>(::score).thenByDescending{it.value.size}.thenByDescending{publisherCount(it.value)}.thenByDescending{it.key.split(' ').size}.thenBy{it.key})
   val redundantStandalone=mutableSetOf<String>()
+  val standaloneDuplicateReasons=linkedMapOf<String,List<String>>()
+  val candidateSelectionReasons=linkedMapOf<String,String>()
   val variationsByParent=linkedMapOf<String,LinkedHashSet<String>>()
   while(true){
    ranked.clear()
    variationsByParent.clear()
    for(candidate in candidates){
-    if(candidate.key in redundantStandalone)continue
+     if(candidate.key in redundantStandalone){
+      candidateSelectionReasons[candidate.key]="Removed by standaloneDuplicates using ${standaloneDuplicateReasons[candidate.key].orEmpty().joinToString()}"
+      continue
+     }
+     candidateSelectionReasons.remove(candidate.key)
     val parent=ranked.firstOrNull{chosen->
      overlappingPhrases(chosen.key,candidate.key)||variationsByParent[chosen.key].orEmpty().any{overlappingPhrases(it,candidate.key)}
     }
     if(parent!=null){
+      candidateSelectionReasons[candidate.key]="Grouped as a variation of ${parent.key} by the existing phrase-overlap rule"
       variationsByParent.getOrPut(parent.key){linkedSetOf()}.add(candidate.key)
      continue
     }
@@ -177,11 +202,13 @@ object KeywordTrends {
       candidateIds.intersect(chosenIds).size.toDouble()/candidateIds.union(chosenIds).size>=0.8&&
       (candidatePrior.isEmpty()&&chosenPrior.isEmpty()||candidatePrior.isNotEmpty()&&chosenPrior.isNotEmpty()&&candidatePrior.intersect(chosenPrior).size.toDouble()/candidatePrior.union(chosenPrior).size>=0.8)
     }
+     if(overlap)candidateSelectionReasons[candidate.key]="Suppressed by existing article-overlap comparison against a selected phrase"
     if(!overlap)ranked.add(candidate)
     if(ranked.size==8)break
    }
-  val bracketKeys=ranked.map{it.key}+variationsByParent.values.flatMap{it}
-  val newlyRedundant=standaloneDuplicates(bracketKeys)-redundantStandalone
+   val bracketKeys=ranked.map{it.key}+variationsByParent.values.flatMap{it}
+   val newlyRedundant=standaloneDuplicates(bracketKeys)-redundantStandalone
+   newlyRedundant.forEach{term->standaloneDuplicateReasons[term]=bracketKeys.filter{phrase->keyWords(phrase).size>1&&term in keyWords(phrase)}}
    if(newlyRedundant.isEmpty())break
    redundantStandalone.addAll(newlyRedundant)
   }
@@ -230,6 +257,43 @@ object KeywordTrends {
     .thenBy{keywords[it].key}
   )
   val sortedKeywords=sortedIndices.map{keywords[it]}
+   if(standaloneDiagnosticSink!=null||diagnosticCapture!=null){
+   val candidateRanks=candidates.mapIndexed{index,entry->entry.key to index+1}.toMap()
+   val selectedParents=ranked.mapIndexed{index,entry->entry.key to index+1}.toMap()
+   val finalCardRanks=mutableMapOf<String,Int>()
+   sortedIndices.forEachIndexed{index,cardIndex->
+    val parent=ranked[cardIndex].key
+    finalCardRanks[parent]=index+1
+    variationsByParent[parent].orEmpty().forEach{finalCardRanks[it]=index+1}
+    finalCardRanks[keywords[cardIndex].key]=index+1
+   }
+   val variationParents=variationsByParent.flatMap{(parent,variations)->variations.map{it to parent}}.toMap()
+   val diagnosticKeys=(listOf("points","semana","silva","ukraine","brasil","help")+ranked.map{it.key}.filter{keyWords(it).size==1}+redundantStandalone).distinct()
+   val diagnostics=diagnosticKeys.map{term->
+    val singleton=currentIndex[term]
+    val singletonEntry=currentIndex.entries.firstOrNull{it.key==term}
+    val related=currentIndex.entries.filter{(phrase,_)->keyWords(phrase).size>1&&term in meaningfulKeyWords(phrase)}
+     .sortedBy{candidateRanks[it.key]?:Int.MAX_VALUE}.map{entry->
+      val parent=variationParents[entry.key]
+      RelatedTrendPhraseDiagnostic(entry.key,entry.value.firstOrNull()?.let{terms(it)[entry.key]},entry.value.map{it.id}.distinct(),previousIndex[entry.key].orEmpty().map{it.id}.distinct(),components(entry),entry.key in candidateRanks,
+       if(entry.key !in candidateRanks&&repeated&&!(entry.value.size>=2&&publisherCount(entry.value)>=2))"Fails corpus-wide repeated-term support rule (minimum two articles and two publishers)" else null,
+       candidateRanks[entry.key],candidateSelectionReasons[entry.key]?:if(entry.key in candidateRanks&&selectedParents[entry.key]==null&&parent==null)"Did not enter the selected top-eight ranked set" else null,selectedParents[entry.key]?:parent?.let{selectedParents[it]},finalCardRanks[entry.key]?:parent?.let{finalCardRanks[it]},parent)
+     }
+    val candidateRank=candidateRanks[term]
+    StandaloneTrendDiagnostic(term,singleton?.firstOrNull()?.let{terms(it)[term]},singleton!=null,
+     if(singleton!=null&&candidateRank==null&&repeated&&!(singleton.size>=2&&publisherCount(singleton)>=2))"Fails corpus-wide repeated-term support rule (minimum two articles and two publishers)" else null,
+       singleton.orEmpty().map{it.id}.distinct(),previousIndex[term].orEmpty().map{it.id}.distinct(),singletonEntry?.let(::components),candidateRank,candidateSelectionReasons[term]?:if(candidateRank!=null&&selectedParents[term]==null&&term !in redundantStandalone)"Did not enter the selected top-eight ranked set" else null,selectedParents[term],finalCardRanks[term],when{
+      singleton==null->"Not generated by extraction"
+      candidateRank==null->"Excluded from candidate ranking: ${if(repeated)"fails repeated-term support rule" else "no eligible ranked candidate"}"
+      term in redundantStandalone->"Removed by standaloneDuplicates using ${standaloneDuplicateReasons[term].orEmpty().joinToString() }"
+      selectedParents[term]==null->"Ranked candidate did not enter the selected top-eight set"
+      else->"Selected as a standalone card"
+     },term in redundantStandalone,
+     standaloneDuplicateReasons[term].orEmpty(),related)
+   }
+    standaloneDiagnosticSink?.let{sink->runCatching{sink(diagnostics)}}
+    diagnosticCapture?.let{capture->runCatching{capture(diagnostics)}}
+   }
   val sortedLines=lines.take(summaryPrefixSize)+sortedIndices.flatMap{keywordLines[it]}
   val sortedSupporting=sortedIndices.flatMap{keywordSupporting[it]}.distinctBy{it.id}
   keywords.clear()
@@ -572,7 +636,7 @@ suspend fun cleanup():CleanupResult{
    return successes>0||active.isEmpty()
   }finally{if(progress.value.startsWith("Refreshed")||progress.value.startsWith("Indexing"))progress.value="Sync stopped"}
  }
- suspend fun research(question:String,onUpdate:(String)->Unit,filters:ResearchFilters=ResearchFilters()):String{
+  suspend fun research(question:String,onUpdate:(String)->Unit,filters:ResearchFilters=ResearchFilters(),trendDiagnosticCapture:((TrendRunDiagnostic)->Unit)?=null):String{
   ready.await();require(question.isNotBlank()&&question.length<=2000){"Question must contain 1-2000 characters"}
   val c=settings.config();val now=System.currentTimeMillis()
   val fromAt=maxOf(Algorithms.cutoff(now,c.days),filters.fromAt?:0L)
@@ -593,7 +657,11 @@ suspend fun cleanup():CleanupResult{
    val health=dao.trendFeedHealth(start,allSources,allowed)
   val refresh=dao.trendSourceRefresh(allSources,allowed).associate{it.id to it.lastSuccess}
    val filterNote="sources=${if(filters.sourceIds.isEmpty())"all" else filters.sourceIds.size}, publishers=${if(filters.publishers.isEmpty())"all" else filters.publishers.joinToString(",")}, topic=${filters.topic.ifBlank{"none"}}, languages=${filters.languages.sorted().joinToString(",")}, window=${(end-start)/60_000} minutes"
-  val summary=withContext(Dispatchers.Default){KeywordTrends.analyze(recent,preceding,health,start,end,filterNote,baselineComplete,refresh)}
+   val provenance=trendDiagnosticCapture?.let{KeywordTrends.inputProvenance(start,end,precedingStart,baselineComplete,languages,allSources,allowed,filters,pattern,alternate,recent,preceding)}
+   var capturedTerms:List<StandaloneTrendDiagnostic>?=null
+   val perRunCapture:((List<StandaloneTrendDiagnostic>)->Unit)?=trendDiagnosticCapture?.let{{terms->capturedTerms=terms}}
+   val summary=withContext(Dispatchers.Default){KeywordTrends.analyze(recent,preceding,health,start,end,filterNote,baselineComplete,refresh,perRunCapture)}
+   if(trendDiagnosticCapture!=null&&provenance!=null&&capturedTerms!=null)runCatching{trendDiagnosticCapture(TrendRunDiagnostic(provenance,capturedTerms!!))}
    val id=UUID.randomUUID().toString()
    val evidence=summary.supporting.take(c.topK.coerceIn(1,24)).mapIndexed{index,article->
     EvidenceEntity("$id:$index",id,index+1,article.title,article.url,article.source,(article.title+"\n"+article.body).take(1000),article.publishedAt,now,Algorithms.hash(article.title+article.body),"TREND_REFERENCE",article.firstSeenAt)

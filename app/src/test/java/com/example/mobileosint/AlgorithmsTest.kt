@@ -163,6 +163,88 @@ class AlgorithmsTest {
   assertTrue(keywords.any{it.variations.orEmpty().contains("Lula da Silva")})
   assertFalse(keywords.any{it.key=="silva"})
  }
+ @Test fun standaloneDiagnosticIdentifiesSilvaDuplicatePhraseWithoutChangingReport(){
+  val current=listOf(trendArticle("a","Luiz Inácio Lula da Silva anuncia reforma",host="one.example"),trendArticle("b","Luiz Inácio Lula da Silva comenta reforma",host="two.example"),trendArticle("c","Silva lidera projeto cultural",host="three.example"),trendArticle("d","Silva apresenta exposição",host="four.example"))
+  val previous=listOf(trendArticle("e","Luiz Inácio Lula da Silva anuncia plano",host="one.example"),trendArticle("f","Luiz Inácio Lula da Silva comenta plano",host="two.example"),trendArticle("g","Silva prepara exposição",host="three.example"))
+  var captured:List<StandaloneTrendDiagnostic>?=null
+  KeywordTrends.standaloneDiagnosticSink={captured=it}
+  val result=try{KeywordTrends.analyze(current,previous,TrendFeedHealth(4,0,1_000_000L),0L,1_000_000L,"all")}finally{KeywordTrends.standaloneDiagnosticSink=null}
+  val silva=captured!!.first{it.key=="silva"}
+  val matchingPhrase=silva.relatedPhrases.first{it.key=="lula da silva"}
+  assertTrue(matchingPhrase.selectedRank!=null)
+  assertTrue("lula da silva" in silva.duplicatePhraseKeys)
+  assertFalse(result.report.keywords.any{it.key=="silva"})
+ }
+ @Test fun standaloneDiagnosticReportsProductionScoresSupportAndDuplicateReason(){
+  val articles=listOf(
+   trendArticle("current-1","Points reward",host="one.example"),
+   trendArticle("current-2","Points reward",host="two.example"),
+   trendArticle("current-3","Points points",host="three.example")
+  )
+  var captured:List<StandaloneTrendDiagnostic>?=null
+  val report=KeywordTrends.analyze(articles,emptyList(),TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")
+  KeywordTrends.standaloneDiagnosticSink={captured=it}
+  try{
+   val enabled=KeywordTrends.analyze(articles,emptyList(),TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")
+   assertEquals(report,enabled)
+  }finally{KeywordTrends.standaloneDiagnosticSink=null}
+  val points=captured!!.first{it.key=="points"}
+  assertTrue(points.candidateGenerated)
+  assertEquals("Points",points.displayTerm)
+  assertEquals(listOf("current-1","current-2","current-3"),points.supportArticleIds)
+  assertEquals(3,points.score!!.articleFrequency)
+  assertEquals(3,points.score.articleCount)
+  assertEquals(points.score.idf, kotlin.math.ln(1.0+(3.0-3.0+0.5)/(3.0+0.5)),0.0)
+  assertTrue(points.removedByStandaloneDuplicates)
+  assertTrue(points.duplicatePhraseKeys.isNotEmpty())
+  assertTrue(points.selectionOutcome.startsWith("Removed by standaloneDuplicates"))
+  assertTrue(points.relatedPhrases.any{it.key=="points reward"&&it.supportArticleIds==listOf("current-1","current-2")&&it.candidateEligible&&it.selectedRank!=null})
+  assertTrue(captured!!.any{it.key=="semana"&&!it.candidateGenerated})
+  assertNull(KeywordTrends.standaloneDiagnosticSink)
+ }
+ @Test fun perRunTrendCapturePreservesInputsAndSharesProductionDiagnostics(){
+  val current=listOf(
+   trendArticle("cur-1","Points reward",host="one.example",at=300L,publishedAt=250L,language="en").copy(sourceId="source-1"),
+   trendArticle("cur-2","Points reward",host="two.example",at=200L,publishedAt=null,language="pt").copy(sourceId="source-2"),
+   trendArticle("cur-3","Points points",host="three.example",at=100L,publishedAt=90L,language="und").copy(sourceId="source-3")
+  )
+  val preceding=listOf(trendArticle("prev-1","Points bonus",host="four.example",at=50L,publishedAt=40L,language="en").copy(sourceId="source-4"))
+  val filters=ResearchFilters(sourceIds=setOf("source-1","source-2"),publishers=setOf("one.example"),topic="",languages=setOf("en","pt"),trendMinutes=60)
+  val health=TrendFeedHealth(4,0,400L)
+  val refresh=current.plus(preceding).associate{it.sourceId to it.firstSeenAt}
+  val baseline=KeywordTrends.analyze(current,preceding,health,100L,400L,"filters",true,refresh)
+  var captured:TrendRunDiagnostic?=null
+  val provenance=KeywordTrends.inputProvenance(100L,400L,-200L,false,listOf("pt","en"),false,listOf("source-2","source-1"),filters,"%topic%","%alternate%",current,preceding)
+  val enabled=KeywordTrends.analyze(current,preceding,health,100L,400L,"filters",true,refresh){terms->captured=TrendRunDiagnostic(provenance,terms)}
+  assertEquals("Capture cannot change output",baseline,enabled)
+  val trace=captured!!
+  assertEquals(100L,trace.provenance.start)
+  assertEquals(400L,trace.provenance.end)
+  assertEquals(-200L,trace.provenance.previousStart)
+  assertFalse(trace.provenance.baselineComplete)
+  assertEquals(listOf("en","pt"),trace.provenance.languages)
+  assertFalse(trace.provenance.allSources)
+  assertEquals(listOf("source-1","source-2"),trace.provenance.selectedSourceIds)
+  assertEquals(listOf("source-1","source-2"),trace.provenance.sourceFilterIds)
+  assertEquals(listOf("one.example"),trace.provenance.publisherFilters)
+  assertEquals("%topic%",trace.provenance.topicPattern)
+  assertEquals("%alternate%",trace.provenance.alternateTopicPattern)
+  assertTrue(trace.provenance.researchEligibleSourceScope)
+  assertEquals(listOf("cur-1","cur-2","cur-3"),trace.provenance.current.map{it.articleId})
+  assertEquals(listOf("prev-1"),trace.provenance.preceding.map{it.articleId})
+  assertEquals(listOf(300L,200L,100L),trace.provenance.current.map{it.effectiveAt})
+  assertEquals(listOf(250L,null,90L),trace.provenance.current.map{it.publishedAt})
+  assertEquals(listOf("source-1","source-2","source-3"),trace.provenance.current.map{it.sourceId})
+  assertEquals(listOf(300L,200L,100L),trace.provenance.current.map{it.firstSeenAt})
+  assertEquals(listOf("source-4"),trace.provenance.preceding.map{it.sourceId})
+  assertEquals("",trace.provenance.topicFilter)
+  assertTrue(trace.provenance.current.all{it.researchEligible})
+  val points=trace.terms.first{it.key=="points"}
+  assertEquals(listOf("cur-1","cur-2","cur-3"),points.supportArticleIds)
+  assertTrue(points.relatedPhrases.any{it.key=="points reward"&&it.supportArticleIds==listOf("cur-1","cur-2")})
+  val throwingCapture: (List<StandaloneTrendDiagnostic>)->Unit={error("diagnostic failure")}
+  assertEquals(baseline,KeywordTrends.analyze(current,preceding,health,100L,400L,"filters",true,refresh,throwingCapture))
+ }
 
  @Test fun keywordWindowsAreEqualAndRespectExplicitDates(){
   val now=10_000_000L;val window=KeywordTrends.window(now,0L,ResearchFilters())
