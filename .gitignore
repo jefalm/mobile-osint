@@ -5,10 +5,11 @@ local.properties
 **/build/
 *.apk
 
-# Local adb/UIAutomator verification captures. These are root-level scratch files
-# only (dumps, scan logs, build/test output); no source lives in the repo root as
-# .txt/.xml. Conventional root documents are re-allowed explicitly below.
+# Local adb/UIAutomator verification captures. Root-level scratch only: UI
+# hierarchy dumps, scan logs and build/test output. Tracked files are never
+# affected by ignore rules; conventional root documents are re-allowed below.
 /*.xml
 /*.txt
 !/*LICENSE.txt
 !/*NOTICE.txt
+!/*QUICK_START.txt
