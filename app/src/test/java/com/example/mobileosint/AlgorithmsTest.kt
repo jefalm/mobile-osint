@@ -71,6 +71,32 @@ class AlgorithmsTest {
   assertFalse(KeywordTrends.allowedToken("  article  ","en"))
   assertTrue(KeywordTrends.allowedToken("Solar","en"))
  }
+ @Test fun boilerplateIsRemovedBeforeTokensAndPhrasesAreGenerated(){
+  for(noise in listOf("Clique","CLIQUE","cLiQuE","aqui","AQUI","CLICK","here","HERE","clique   aqui","click   here")){
+   val extracted=KeywordTrends.terms(trendArticle("noise-$noise","Solar $noise Energy",language="und"))
+   for(token in noise.lowercase().split(Regex("\\s+")))assertFalse("$token should not be a standalone term",extracted.containsKey(token))
+   assertFalse("noise must not bridge Solar and Energy: $noise", "solar energy" in extracted)
+   assertTrue("legitimate adjacent phrase should survive: $noise", "solar" in extracted && "energy" in extracted)
+  }
+  for(noise in listOf("Clique","CLIQUE","aqui","CLICK","here")){
+   assertFalse(noise,KeywordTrends.allowedToken(noise,"und"))
+  }
+  assertTrue(KeywordTrends.terms(trendArticle("whitespace","Solar   Energy",language="und")).containsKey("solar energy"))
+ }
+ @Test fun phraseEligibilityAndSingletonRankingRemainIndependent(){
+  val phrases=listOf(
+   trendArticle("donald","Donald Trump"),
+   trendArticle("president","President Trump",language="en"),
+   trendArticle("ukraine","Ukraine war",language="en"),
+   trendArticle("brasil","economia do Brasil",language="pt")
+  )
+  val expected=listOf("donald trump","president trump","ukraine war","economia do brasil")
+  phrases.zip(expected).forEach{(article,phrase)->assertTrue(phrase,phrase in KeywordTrends.terms(article))}
+
+  val singletonArticles=(1..5).map{index->trendArticle("rank-$index","Trump",host="rank$index.example")}
+  val report=KeywordTrends.analyze(singletonArticles,emptyList(),TrendFeedHealth(5,0,1_000_000L),0L,1_000_000L,"all")
+  assertEquals("singleton score/ranking remains the production scorer's decision",listOf("trump"),report.report.keywords.map{it.key})
+ }
  @Test fun extractedTokenAndPhraseLabelsAreTrimmedBeforeStorage(){
   val terms=KeywordTrends.terms(trendArticle("spaced","  fim   Banco Central  "))
   assertEquals("fim",terms["fim"])

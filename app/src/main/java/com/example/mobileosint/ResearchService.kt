@@ -53,15 +53,15 @@ object KeywordTrends {
  private val portugueseStop=("a ano anos as ao aos apos ate com como da das de dela dele depois deve devem do dos e em enquanto entre essa esse esta estao estava estavam este eu foi foram ha isso ja mais mas me meu minha na nas nao nesta neste no nos o os ou para pela pelo por porque que sao se sem seu sua seus suas ser sera serao sendo sobre tambem tem ter tu um uma uns umas presidente "+
   "ainda alguns algumas antes assim ate cada contra debaixo desde dia dias durante eles elas ela ele era eram essa essas esse esses estas estes eu hoje inicio mesmo muito muita muitos muitas nossa nossas nosso nossos onde pela pelas pelo pelos pode podem poderia podera pois qual quando quem se serao sido sob suas todo toda todos todas vai vao voce voces").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
  private val noise=("article articles breaking click comment comments continue daily edition feed feeds follow followers following headline headlines homepage latest like likes live menu more new news newsletter photo photograph photo credits copyright post posts privacy privacy policy read read more report reports reported reply replies response responses rights reserved said says share shares shared sharing source sources story stories subscribe subscribers subscription terms today top trending trend trends update updates yesterday " +
-  "artigo artigos assine assinatura assinar comentarios comentario comentar confira curtir curtidas desta desta-feira diz disse fonte fontes hoje inscreva-se jornal leia leia mais noticia noticias novo nova novos novas pagina publicidade responder resposta respostas saiba saiba mais segundo seguidores seguir veja veja mais veja tambem segunda-feira terca-feira quarta-feira quinta-feira sexta-feira sabado domingo monday tuesday wednesday thursday friday saturday sunday getty images").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
- private val boilerplate=Regex("(?i)\\b(?:ap news|europe live|breaking news|latest news|read more|continue reading|click here|share this|skip to content|leia mais|saiba mais|veja tamb[eé]m|leave a comment|add a comment|no comments|post a comment)\\b")
+   "artigo artigos assine assinatura assinar comentarios comentario comentar confira curtir curtidas desta desta-feira diz disse fonte fontes hoje inscreva-se jornal leia leia mais noticia noticias novo nova novos novas pagina publicidade responder resposta respostas saiba saiba mais segundo seguidores seguir veja veja mais veja tambem segunda-feira terca-feira quarta-feira quinta-feira sexta-feira sabado domingo monday tuesday wednesday thursday friday saturday sunday getty images clique aqui").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
+  private val boilerplate=Regex("(?i)\\b(?:ap news|europe live|breaking news|latest news|read more|continue reading|click\\s+here|clique\\s+aqui|clique|aqui|click|here|share this|skip to content|leia mais|saiba mais|veja tamb[eé]m|leave a comment|add a comment|no comments|post a comment)\\b")
  private val markup=Regex("(?is)<(?:script|style)\\b[^>]*>.*?</(?:script|style)>|<[^>]+>|&(?:#\\d+|#x[0-9a-f]+|[a-z]+);")
  private val urls=Regex("(?i)\\b(?:https?://|www\\.)[^\\s<>]+")
  private val feedPrefix=Regex("(?i)^\\s*arxiv:\\S+\\s+announce type:\\s*\\w+\\s+abstract:\\s*")
  private val word=Regex("[\\p{L}\\p{N}]+(?:-[\\p{L}\\p{N}]+)*")
  private val phraseOnlyTerms=setOf("access", "according", "administration", "against", "ahead", "amid", "announced", "appeared", "attacks", "authorities", "back", "being", "between", "big", "campaign", "chief", "children", "city", "company", "country", "court", "data", "day", "days", "deal", "development", "dois", "down", "during", "election", "elementary", "end", "federal", "fire", "former", "future", "game", "global", "government", "group", "hit", "home", "including", "killed", "last", "leaders", "least", "life", "made", "major", "make", "man", "market", "media", "midterm", "military", "million", "month", "near", "next", "night", "off", "officials", "oil", "party", "people", "pessoas", "police", "political", "president", "press", "prices", "rio", "school", "season", "secretary", "series", "set", "shooter", "shooting", "show", "since", "state", "still", "support", "take", "three", "time", "times", "told", "two", "vida", "voters", "war", "win", "world").map(::key).toSet()
  private fun key(value:String)=Normalizer.normalize(value.trim().lowercase(Locale.ROOT),Normalizer.Form.NFD).replace(Regex("\\p{M}+"),"")
- private fun clean(value:String)=value.replace(feedPrefix,"").replace(urls," ").replace(markup," ").replace(boilerplate," ")
+  private fun clean(value:String)=value.replace(feedPrefix,"").replace(urls," ").replace(markup," ").replace(boilerplate,".")
  internal fun terms(article:TrendArticle):Map<String,String>{
   val result=linkedMapOf<String,String>()
   fun allowed(value:String)=allowedToken(value,article.language)
@@ -76,7 +76,7 @@ object KeywordTrends {
     if(group.zipWithNext().any{(first,second)->text.substring(first.range.last+1,second.range.first).isNotBlank()})continue
     val first=group.first().value;val last=group.last().value
     val named=first.first().isUpperCase()&&last.first().isUpperCase()
-    if(!allowed(first)&&!(named&&key(first) in setOf("sao","one","presidente"))||
+   if(!allowed(first)&&!(named&&key(first) in setOf("sao","one","presidente"))||
      !allowed(last)&&!(named&&key(last) in setOf("week","weeks")))continue
     if(group.drop(1).dropLast(1).any{key(it.value) in noise||it.value.all(Char::isDigit)})continue
     val phrase=group.joinToString(" "){it.value.trim()}.trim()
@@ -154,7 +154,7 @@ object KeywordTrends {
   val acronymWeight=if(entry.key in setOf("us","eu","ia","df"))1.25 else 1.0
   return (frequency*idf+if(documents<5)frequency*0.6 else 0.0)*phraseWeight*acronymWeight
   }
-  val candidates=currentIndex.entries.filter{!repeated||it.value.size>=2&&publisherCount(it.value)>=2}
+   val candidates=currentIndex.entries.filter{!repeated||it.value.size>=2&&publisherCount(it.value)>=2}
     .sortedWith(compareByDescending<Map.Entry<String,List<TrendArticle>>>(::score).thenByDescending{it.value.size}.thenByDescending{publisherCount(it.value)}.thenByDescending{it.key.split(' ').size}.thenBy{it.key})
   val redundantStandalone=mutableSetOf<String>()
   val variationsByParent=linkedMapOf<String,LinkedHashSet<String>>()
