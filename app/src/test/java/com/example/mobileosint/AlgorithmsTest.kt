@@ -81,11 +81,11 @@ class AlgorithmsTest {
  }
  @Test fun standaloneDuplicateRemovalRefillsTheEightTopicLimit(){
   val orders=listOf(
-   "market policy climate budget reform growth future supply",
-   "climate market reform policy future budget supply growth",
-   "reform market future policy supply climate growth budget",
-   "future market supply policy budget growth climate reform",
-   "budget market climate supply future reform policy growth"
+   "sector policy climate budget reform growth target supply",
+   "climate sector reform policy target budget supply growth",
+   "reform sector target policy supply climate growth budget",
+   "target sector supply policy budget growth climate reform",
+   "budget sector climate supply target reform policy growth"
   )
   val current=orders.mapIndexed{index,words->trendArticle("rank$index","${if(index<2)"Solar Energy" else "Solar"} $words",host="rank$index.example")}
   val keys=KeywordTrends.analyze(current,emptyList(),TrendFeedHealth(5,0,1_000_000L),0L,1_000_000L,"all").report.keywords.map{it.key}
