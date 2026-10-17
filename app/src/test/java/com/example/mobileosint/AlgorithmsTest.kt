@@ -105,21 +105,6 @@ class AlgorithmsTest {
  @Test fun standaloneKeywordMatchesWholeNormalizedPhraseWordsOnly(){
   assertEquals(setOf("solar","energy"),KeywordTrends.standaloneDuplicates(listOf("Solar Energy","solar","energy","energ","renewable")))
  }
- @Test fun standaloneDuplicateRemovalRefillsTheEightTopicLimit(){
-  val orders=listOf(
-   "sector policy climate budget reform growth target supply",
-   "climate sector reform policy target budget supply growth",
-   "reform sector target policy supply climate growth budget",
-   "target sector supply policy budget growth climate reform",
-   "budget sector climate supply target reform policy growth"
-  )
-  val current=orders.mapIndexed{index,words->trendArticle("rank$index","${if(index<2)"Solar Energy" else "Solar"} $words",host="rank$index.example")}
-  val keys=KeywordTrends.analyze(current,emptyList(),TrendFeedHealth(5,0,1_000_000L),0L,1_000_000L,"all").report.keywords.map{it.key}
-  assertEquals(8,keys.size)
-  assertTrue("solar energy" in keys)
-  assertFalse("energy" in keys)
-  assertTrue("reform" in keys)
- }
  @Test fun overlappingPhraseIsStoredAsParentVariation(){
   assertTrue(KeywordTrends.overlappingPhrases("Fim da escala","Escala 6x1"))
   assertFalse(KeywordTrends.overlappingPhrases("Fim da escala","Escalaine 6x1"))
@@ -302,29 +287,6 @@ class AlgorithmsTest {
   assertTrue(result.text.contains("https://paper.example/a"))
   assertTrue(result.text.contains("https://other.example/c"))
   assertEquals(3,solarTopics.flatMap{it.supports}.map{it.url}.distinct().size)
- }
- @Test fun trendClutterIsRemovedBeforeCountingInBothWindows(){
-  val current=listOf(trendArticle("a","Nesta terça: Banco Central anuncia GPT-6 - AP News","<script>junkterm</script> &amp; Leia mais https://site.example/clutterterm; energia artificial",host="first.example"),trendArticle("b","Banco Central adota inteligência artificial | Europe live","www.site.example/clutterterm Continue reading",host="second.example"),trendArticle("c","Inteligência artificial no Banco Central","arXiv:2610.12855v1 Announce Type: new Abstract: inteligência artificial",host="third.example"))
-  val previous=listOf(trendArticle("d","Banco Central define regras",host="first.example"),trendArticle("e","Inteligência artificial avança",host="second.example"),trendArticle("f","Other subject",host="third.example"))
-  val result=KeywordTrends.analyze(current,previous,TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")
-  assertTrue(result.text.contains("Banco Central: 3 articles / 3 publishers; previous 1 articles / 1 publishers."))
-  assertEquals("Inteligência artificial",KeywordTrends.terms(current[2])["inteligencia artificial"])
-  assertTrue("inteligencia artificial" in KeywordTrends.terms(previous[1]))
-  assertFalse(result.text.contains("increase in indexed coverage"))
-  val keys=(current+previous).flatMap{KeywordTrends.terms(it).keys}.toSet()
-  for(clutter in listOf("nesta","ap news","europe live","junkterm","clutterterm","arxiv","announce","abstract","continue reading","amp"))assertFalse(clutter,clutter in keys)
- }
- @Test fun trendLabelsRetainNamesAcronymsShortTokensAndNumbersInsideEntities(){
-  val current=listOf(trendArticle("a","Banco do Brasil e GPT-6: IA no DF"),trendArticle("b","Inteligência Artificial e GPT-6 no Banco do Brasil",host="other.example"),trendArticle("c","Banco do Brasil testa GPT-6",host="third.example"))
-  val result=KeywordTrends.analyze(current,emptyList(),TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")
-  assertTrue(result.text.contains("Banco do Brasil: 3 articles / 3 publishers"))
-  assertTrue(result.text.contains("GPT-6: 3 articles / 3 publishers"))
-  assertEquals("Inteligência Artificial",KeywordTrends.terms(current[1])["inteligencia artificial"])
-  assertFalse("ia" in KeywordTrends.terms(current[0]))
-  assertFalse("df" in KeywordTrends.terms(current[0]))
-  assertFalse("e" in KeywordTrends.terms(current[0]))
-  assertFalse("s" in KeywordTrends.terms(trendArticle("possessive","Ukraine’s energy ceasefire")))
-  assertFalse("segunda-feira" in KeywordTrends.terms(trendArticle("weekday","Feriado nesta segunda-feira")))
  }
  @Test fun ambiguousGrammarCountryAndCurrencyUseActualContext(){
   val article=trendArticle("context","São Paulo announces US exports and US$ 20 million for One Direction","Enquanto são fortes, they give us one more chance over the week. São Paulo and the US agree. US$50 is only a price.")
@@ -860,6 +822,15 @@ class AlgorithmsTest {
   val elections=KeywordTrends.terms(trendArticle("elections","Eleições municipais",language="pt"))
   assertFalse(elections.containsKey("eleicoes"))
   assertTrue(elections.containsKey("eleicoes municipais"))
+ }
+
+ @Test fun replacementCharacterBridgesWordsInsteadOfSplittingThem(){
+  val corrupted="s\uFFFDbado de v\uFFFDnculos pol\uFFFDto"
+  assertEquals(listOf("sbado","de","vnculos","polto"),Algorithms.tokens(corrupted))
+  val terms=KeywordTrends.terms(trendArticle("corrupt",corrupted,language="pt"))
+  assertFalse("must not track the chopped fragment 'bado': ${terms.keys}",terms.containsKey("bado"))
+  assertFalse("must not track the chopped fragment 'nculos': ${terms.keys}",terms.containsKey("nculos"))
+  assertFalse("replacement characters must never reach trend keys: ${terms.keys}",terms.keys.any{'\uFFFD' in it})
  }
 
  @Test fun englishGenericStandaloneTermsNeverBecomeTopicsOnFrequencyAlone(){

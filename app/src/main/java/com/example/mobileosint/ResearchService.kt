@@ -51,11 +51,13 @@ object KeywordTrends {
   val volumeScore=if(maxArticleCount>0)100.0*articleCount/maxArticleCount else 0.0
   val diversityScore=if(maxHostCount>0)100.0*distinctHostCount/maxHostCount else 0.0
   val baseScore=(volumeScore+diversityScore)/2.0
-  val multiWordBoost=when{
-   wordCount>=3->1.5
-   wordCount==2->1.3
-   else->1.0
+  val multiWordBoost = when {
+   wordCount >= 4 -> 2.2  // Multi-word phrase boost
+   wordCount == 3 -> 1.8  // Progressive triplet boost
+   wordCount == 2 -> 1.3  // Standard doublet weight
+   else -> 1.0
   }
+
   val saturationPenalty=if(wordCount==1&&totalArticles>0){
    val penetrationRate=articleCount.toDouble()/totalArticles
    if(penetrationRate>0.05)0.5 else 1.0
@@ -86,40 +88,49 @@ object KeywordTrends {
   "about after also all any each even first here just more most much now only said say she some than them then they through too under up very we were why yet could should would might likely meanwhile reports reported says urged urges").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
  private val portugueseStop=("a ano anos as ao aos apos ate com como da das de deixa dela dele depois deve devem do dos e em enquanto entre essa esse esta estao estava estavam este eu foi foram ha isso ja mais mas me meu minha na nas nao nesta neste no nos o os ou para pela pelo por porque que sao se sem seu sua seus suas ser sera serao sendo sobre tambem tem ter tu um uma uns umas presidente "+
   "ainda alguns algumas antes assim ate cada contra debaixo deste destes destas desde dia dias durante eles elas ela ele era eram essa essas esse esses estas estes eu hoje inicio mesmo muito muita muitos muitas nossa nossas nosso nossos onde pela pelas pelo pelos pode podem poderia podera pois qual quando quem se serao sido sob suas todo toda todos todas vai vao voce voces").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
- private val noise=("article articles breaking click comment comments continue daily edition feed feeds follow followers following headline headlines homepage latest like likes live menu more new news newsletter photo photograph photo credits copyright post posts privacy privacy policy read read more report reports reported reply replies response responses rights reserved said says share shares shared sharing source sources story stories subscribe subscribers subscription terms today top trending trend trends update updates yesterday " +
-   "artigo artigos assine assinatura assinar comentarios comentario comentar confira curtir curtidas desta desta-feira diz disse fonte fontes hoje inscreva-se jornal leia leia mais noticia noticias novo nova novos novas pagina publicidade responder resposta respostas saiba saiba mais segundo seguidores seguir veja veja mais veja tambem segunda-feira terca-feira quarta-feira quinta-feira sexta-feira sabado domingo monday tuesday wednesday thursday friday saturday sunday getty images clique aqui").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
-  private val boilerplate=Regex("(?i)\\b(?:ap news|europe live|breaking news|latest news|read more|continue reading|click\\s+here|clique\\s+aqui|clique|aqui|click|here|share this|skip to content|leia mais|saiba mais|veja tamb[eé]m|leave a comment|add a comment|no comments|post a comment)\\b")
+ private val noise=("article articles click clicks comment comments continue edition editions feed feeds follower followers following headline headlines homepage menu newsletter newsletters post posts privacy reply replies response responses rights reserved share shares shared sharing source sources story stories subscribe subscriber subscribers subscription subscriptions submitted terms copyright photo photos photograph photographs gallery galleries picture pictures graphic graphics interactive transcript transcripts image images video videos link links audio podcast podcasts " +
+         "artigo artigos assine assinatura assinaturas assinar comentario comentarios comentar confira curtir curtida curtidas fonte fontes hoje inscreva-se jornal jornais leia noticia noticias novo nova novos novas pagina paginas publicidade responder resposta respostas saiba segundo seguidores seguir veja tambem getty images clique aqui " +
+         "manha madrugada morning mornings afternoon afternoons evening evenings night nights midnight dawn hora horas minuto minutos segundo segundos hour hours minute minutes second seconds instante instantes momento momentos instant instants moment moments " +
+         "janeiro fevereiro marco abril maio junho julho agosto setembro outubro novembro dezembro january february march april may june july august september october november december " +
+         "segunda-feira terca-feira quarta-feira quinta-feira sexta-feira sabado domingo monday tuesday wednesday thursday friday saturday sunday " +
+         "zero um uma dois duas tres quatro cinco seis sete oito nove dez cento cem mil milhao milhoes bilhao bilhoes one two three four five six seven eight nine ten hundred thousand million billion first second third fourth fifth " +
+         "galeria galerias foto fotos imagem imagens video videos link links audio podcast podcasts credito creditos autoria parceria parcerias " +
+         "national international regional general public private exclusive report newsroom agency text texts image images picture pictures video videos link links audio podcast podcasts credit credits authorship partnership " +
+         "galeria de fotos leia mais saiba mais veja mais veja tambem read more privacy policy terms of service terms and conditions photo gallery photo credit image credit all rights reserved follow us click here continue reading related articles related stories read online full coverage click to expand ").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
+ private val boilerplate=Regex("(?i)\\b(?:url|ap news|europe live|breaking news|latest news|read more|continue reading|click\\s+here|clique\\s+aqui|clique|aqui|click|here|share this|skip to content|leia mais|saiba mais|veja tamb[eé]m|leave a comment|add a comment|no comments|post a comment)\\b")
  private val markup=Regex("(?is)<(?:script|style)\\b[^>]*>.*?</(?:script|style)>|<[^>]+>|&(?:#\\d+|#x[0-9a-f]+|[a-z]+);")
  private val urls=Regex("(?i)\\b(?:https?://|www\\.)[^\\s<>]+")
  private val feedPrefix=Regex("(?i)^\\s*arxiv:\\S+\\s+announce type:\\s*\\w+\\s+abstract:\\s*")
- private val word=Regex("[\\p{L}\\p{N}]+(?:-[\\p{L}\\p{N}]+)*")
+ // U+FFFD is included so a decoder replacement character bridges a word instead of splitting it
+ // into fragments such as "bado" ("s\uFFFDbado") or "nculos" ("v\uFFFDnculos").
+ private val word=Regex("[\\p{L}\\p{N}\\p{Sc}\\uFFFD]+(?:-[\\p{L}\\p{N}\\p{Sc}\\uFFFD]+)*")
  /** Standalone-uninformative terms for every language mode: filtered as single tokens, still eligible inside 2-3 word phrases. */
  private val phraseOnlyTerms=setOf("access", "according", "administration", "against", "ahead", "amid", "announced", "appeared", "attacks", "authorities", "back", "being", "between", "big", "brazil", "brasil", "campaign", "chief", "children", "city", "company", "country", "court", "data", "day", "days", "deal", "development", "dois", "down", "during", "election", "elementary", "end", "federal", "fire", "former", "future", "game", "global", "government", "group", "hit", "home", "including", "killed", "last", "leaders", "least", "life", "made", "major", "make", "man", "market", "media", "midterm", "military", "million", "month", "near", "next", "night", "off", "officials", "oil", "party", "people", "pessoas", "point", "points", "police", "political", "president", "press", "prices", "rio", "school", "season", "secretary", "series", "set", "shooter", "shooting", "show", "since", "state", "still", "support", "take", "three", "time", "times", "told", "two", "vida", "voters", "war", "win", "world").map(::key).toSet()
  /** Portuguese equivalents of the background terms above, so both languages are filtered equivalently; standalone use only. */
  private val portuguesePhraseOnlyTerms=phraseOnlyTerms+setOf("acesso","acordo","acidente","agora","anuncio","anuncios","ataque","ataques","autoridade","autoridades","assunto","assuntos","base","bases","campanha","carro","carros","caso","casos","central","cidade","cidades","coisa","coisas","conta","contas","crianca","criancas","dado","dados","desenvolvimento","economia","eleicao","eleicoes","eleitor","eleitores","empresa","empresas","escola","estado","estados","fato","fatos","forma","formas","frente","frentes","futuro","gente","governo","grande","grandes","grupo","guerra","homem","imprensa","incendio","incendios","interior","lado","lados","lider","lideres","maior","maiores","mercado","menor","menores","mes","meses","meio","midia","militar","militares","milhao","milhoes","momento","momentos","mundo","noite","nome","nomes","numero","numeros","ontem","pais","paises","parte","partes","partido","petroleo","policia","ponto","pontos","prazo","prazos","preco","precos","primeira","primeiro","secretario","semana","semanas","temporada","tempo","tipo","tipos","tribunal","ultima","ultimas","ultimo","ultimos","valor","valores","vez","vezes","vitoria","vitorias").map(::key).toSet()
  /** English generic vocabulary that stays available inside phrases but must not become a topic on frequency alone. */
- private val englishPhraseOnlyTerms=phraseOnlyTerms+setOf("part","parts","case","cases","thing","things","way","ways","issue","issues","question","questions","subject","subjects","many","several","various","number","numbers","economy","key").map(::key).toSet()
+ private val englishPhraseOnlyTerms=phraseOnlyTerms+setOf("part","parts","case","cases","thing","things","way","ways","issue","issues","question","questions","subject","subjects","many","several","various","number","numbers","economy","key","new").map(::key).toSet()
  private val ambiguousPhraseOnlyTerms=englishPhraseOnlyTerms+portuguesePhraseOnlyTerms
  /** A known language uses its own generic vocabulary; an ambiguous one keeps both, like the existing stopword convention. */
  private fun phraseOnly(language:String)=when(language){"pt"->portuguesePhraseOnlyTerms;"en"->englishPhraseOnlyTerms;else->ambiguousPhraseOnlyTerms}
- private fun key(value:String)=Normalizer.normalize(value.trim().lowercase(Locale.ROOT),Normalizer.Form.NFD).replace(Regex("\\p{M}+"),"")
-  private fun clean(value:String)=value.replace(feedPrefix,"").replace(urls," ").replace(markup," ").replace(boilerplate,".")
+ private fun key(value:String)=Normalizer.normalize(value.trim().lowercase(Locale.ROOT),Normalizer.Form.NFD).replace(Regex("\\p{M}+"),"").replace("\uFFFD","")
+ private fun clean(value:String)=value.replace(feedPrefix,"").replace(urls," ").replace(markup," ").replace(boilerplate,".")
  internal fun terms(article:TrendArticle):Map<String,String>{
   val result=linkedMapOf<String,String>()
   val standaloneOnly=phraseOnly(article.language)
   fun allowed(value:String)=allowedToken(value,article.language)
   fun collect(text:String){
    val matches=word.findAll(text).toList()
-  matches.forEach{match->
-   val token=match.value.trim()
+   matches.forEach{match->
+    val token=match.value.trim()
     if(allowed(token)&&key(token) !in standaloneOnly)result.putIfAbsent(key(token),token)
-  }
-  for(size in 2..minOf(3,matches.size))for(index in 0..matches.size-size){
+   }
+   for(size in 2..minOf(3,matches.size))for(index in 0..matches.size-size){
     val group=matches.subList(index,index+size)
     if(group.zipWithNext().any{(first,second)->text.substring(first.range.last+1,second.range.first).isNotBlank()})continue
     val first=group.first().value;val last=group.last().value
     val named=first.first().isUpperCase()&&last.first().isUpperCase()
-   if(!allowed(first)&&!(named&&key(first) in setOf("sao","one","presidente"))||
+    if(!allowed(first)&&!(named&&key(first) in setOf("sao","one","presidente","president"))||
      !allowed(last)&&!(named&&key(last) in setOf("week","weeks")))continue
     if(group.drop(1).dropLast(1).any{key(it.value) in noise||it.value.all(Char::isDigit)})continue
     val phrase=group.joinToString(" "){it.value.trim()}.trim()
@@ -132,7 +143,8 @@ object KeywordTrends {
  }
  internal fun allowedToken(value:String,language:String):Boolean{
   val token=value.trim()
-  if(token.length<3)return false
+  // Keep the matcher boundary intact, but never promote an unrecoverable label into a trend card.
+  if(token.length<3||token.contains('\uFFFD'))return false
   val normalized=key(token)
   val stops=when(language){"pt"->portugueseStop;"en"->englishStop;else->portugueseStop+englishStop}
   if(normalized in noise||!normalized.any{it.isLetter()})return false
@@ -656,6 +668,11 @@ suspend fun cleanup():CleanupResult{
         dao.putChunks(generatedChunks.mapIndexed{i,text->ChunkEntity("$id:$i",id,text)})
        }
       }
+      // The decoder already repaired every item present in this feed. Older cached rows that still
+      // carry U+FFFD are lossy and cannot be recovered from the database, so drop them rather than
+      // letting diamonds leak into titles, excerpts or trend labels.
+      val corruptRemoved=if(parsedCount>0)dao.deleteCorruptArticles(source.id) else 0
+      if(corruptRemoved>0)Log.d("MobileOsintDiag","Source ${source.id} dropped $corruptRemoved stale corrupt article(s)")
       val statusStr=when{
        parsedCount==0->"EMPTY_FEED: 0 items parsed"
        insertedCount>0||updatedCount>0->"SUCCESS: $insertedCount new, $updatedCount updated ($parsedCount parsed)"

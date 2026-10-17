@@ -31,7 +31,9 @@ object Algorithms {
   }
   return out.filter{it.isNotBlank()}
  }
- fun tokens(s:String)=Regex("[\\p{L}\\p{N}]+(?:[._:/-][\\p{L}\\p{N}]+)*").findAll(Normalizer.normalize(s.lowercase(),Normalizer.Form.NFD).replace(Regex("\\p{M}+"),"")).map{it.value}.toList()
+ // U+FFFD stays inside the token so a malformed byte bridges the word instead of splitting it;
+ // normalization removes it before lookups so keys never carry replacement characters.
+ fun tokens(s:String)=Regex("[\\p{L}\\p{N}\\uFFFD]+(?:[._:/-][\\p{L}\\p{N}\\uFFFD]+)*").findAll(Normalizer.normalize(s.lowercase(),Normalizer.Form.NFD).replace(Regex("\\p{M}+"),"")).map{it.value.replace("\uFFFD","")}.filter{it.isNotBlank()}.toList()
  fun searchTokens(s:String)=tokens(s).filter{it !in stopwords}.map{synonyms[it]?:it}
  fun aliases(term:String):List<String>{val canonical=synonyms[term]?:term;return synonyms.filterValues{it==canonical}.keys.toList().ifEmpty{listOf(term)}}
  fun detectLanguage(s:String):String{

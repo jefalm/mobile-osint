@@ -29,7 +29,8 @@ object Network {
    check(r.isSuccessful){"HTTP ${r.code}"};val body=r.body?:error("Empty response")
    body.byteStream().use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);var total=0
     while(true){ensureActive();val n=input.read(buffer);if(n<0)break;total+=n;check(total<=2_000_000){"Feed exceeds 2 MB limit"};out.write(buffer,0,n)}
-    out.toString("UTF-8")
+    // Honor BOM/HTTP/XML charset declarations; strict UTF-8 is the default. Never use the platform default.
+    FeedTextDecoder.decode(out.toByteArray(),r.header("Content-Type"))
    }
   }
  }

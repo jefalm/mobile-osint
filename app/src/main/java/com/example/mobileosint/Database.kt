@@ -46,6 +46,8 @@ data class TrendSourceRefresh(val id:String,val lastSuccess:Long)
  @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putArticle(a:ArticleEntity)
  @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun putChunks(c:List<ChunkEntity>)
  @Query("DELETE FROM chunks WHERE articleId=:articleId") suspend fun deleteChunks(articleId:String)
+ /** Drops cached rows whose text still contains an unrecoverable U+FFFD replacement character. */
+ @Query("DELETE FROM articles WHERE sourceId=:sourceId AND (instr(title,char(65533))>0 OR instr(body,char(65533))>0)") suspend fun deleteCorruptArticles(sourceId:String):Int
  @Query("DELETE FROM articles WHERE effectiveAt < :cutoff") suspend fun expire(cutoff:Long):Int
  @Query("DELETE FROM articles WHERE id NOT IN (SELECT id FROM articles ORDER BY effectiveAt DESC,id LIMIT :cap)") suspend fun cap(cap:Int):Int
  @Query("SELECT COUNT(*) FROM articles") fun count():Flow<Int>
