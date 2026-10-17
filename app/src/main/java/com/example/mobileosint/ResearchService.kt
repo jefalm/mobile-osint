@@ -47,6 +47,11 @@ object KeywordReportCodec {
 object KeywordTrends {
  /** Optional debug hook for inspecting the real trend inputs. Null by default; emits IDs and scores, never article text. */
  @Volatile var standaloneDiagnosticSink:((List<StandaloneTrendDiagnostic>)->Unit)?=null
+ internal fun combinedScore(articleCount:Int,distinctHostCount:Int,maxArticleCount:Int,maxHostCount:Int):Double{
+  val volumeScore=if(maxArticleCount>0)100.0*articleCount/maxArticleCount else 0.0
+  val diversityScore=if(maxHostCount>0)100.0*distinctHostCount/maxHostCount else 0.0
+  return (volumeScore+diversityScore)/2.0
+ }
  internal fun inputProvenance(start:Long,end:Long,previousStart:Long,baselineComplete:Boolean,languages:List<String>,allSources:Boolean,selectedSourceIds:List<String>,filters:ResearchFilters,topicPattern:String,alternateTopicPattern:String,current:List<TrendArticle>,previous:List<TrendArticle>)=TrendInputProvenance(
   start,end,previousStart,baselineComplete,languages.distinct().sorted(),allSources,selectedSourceIds.distinct().sorted(),filters.sourceIds.sorted(),filters.publishers.sorted(),filters.topic,topicPattern,alternateTopicPattern,true,
   current.map{TrendInputArticleDiagnostic(it.id,it.effectiveAt,it.publishedAt,it.firstSeenAt,it.sourceId,true)},
@@ -269,8 +274,10 @@ object KeywordTrends {
   keywordLines.add(lines.subList(cardLineStart,lines.size).toList())
   keywordSupporting.add(supporting.subList(cardSupportStart,supporting.size).toList())
   }
+  val maxArticleCount=keywords.maxOfOrNull{it.currentArticles}?:0
+  val maxHostCount=keywords.maxOfOrNull{it.currentPublishers}?:0
   val sortedIndices=keywords.indices.sortedWith(
-   compareByDescending<Int>{keywords[it].supports.size}
+   compareByDescending<Int>{combinedScore(keywords[it].currentArticles,keywords[it].currentPublishers,maxArticleCount,maxHostCount)}
     .thenByDescending{keywords[it].currentArticles}
     .thenByDescending{keywords[it].currentPublishers}
     .thenBy{keywords[it].key}

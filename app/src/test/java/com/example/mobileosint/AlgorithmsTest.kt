@@ -1047,4 +1047,72 @@ class AlgorithmsTest {
   assertEquals(3,report.previousArticles)
   assertEquals("languages=pt",report.filters)
  }
+
+ @Test fun balancedScorecardEqualScoresWhenNormalizedDimensionsAreEqual(){
+  val scoreMax=KeywordTrends.combinedScore(articleCount=10,distinctHostCount=5,maxArticleCount=10,maxHostCount=5)
+  assertEquals(100.0,scoreMax,1e-6)
+  val scoreHalf=KeywordTrends.combinedScore(articleCount=5,distinctHostCount=2,maxArticleCount=10,maxHostCount=4)
+  assertEquals(50.0,scoreHalf,1e-6)
+ }
+
+ @Test fun balancedScorecardHighVolumeLowDiversityVsLowerVolumeHighDiversity(){
+  val current=buildList{
+   repeat(5){index->add(trendArticle("a1-$index","Solar Energy",host="hostA.example"))}
+   repeat(5){index->add(trendArticle("a2-$index","Solar Energy",host="hostB.example"))}
+   repeat(2){index->add(trendArticle("b1-$index","Quantum Battery",host="host1.example"))}
+   repeat(2){index->add(trendArticle("b2-$index","Quantum Battery",host="host2.example"))}
+   repeat(2){index->add(trendArticle("b3-$index","Quantum Battery",host="host3.example"))}
+   repeat(1){index->add(trendArticle("b4-$index","Quantum Battery",host="host4.example"))}
+   repeat(1){index->add(trendArticle("b5-$index","Quantum Battery",host="host5.example"))}
+  }
+  val result=KeywordTrends.analyze(current,emptyList(),TrendFeedHealth(7,0,1_000_000L),0L,1_000_000L,"all")
+  val topicKeys=result.report.keywords.map{it.key}
+  assertEquals(listOf("quantum battery","solar energy"),topicKeys)
+ }
+
+ @Test fun balancedScorecardNormalizesAgainstSampleMaxima(){
+  val s1=KeywordTrends.combinedScore(articleCount=20,distinctHostCount=2,maxArticleCount=20,maxHostCount=10)
+  val s2=KeywordTrends.combinedScore(articleCount=10,distinctHostCount=10,maxArticleCount=20,maxHostCount=10)
+  val s3=KeywordTrends.combinedScore(articleCount=5,distinctHostCount=5,maxArticleCount=20,maxHostCount=10)
+  assertEquals(60.0,s1,1e-6)
+  assertEquals(75.0,s2,1e-6)
+  assertEquals(37.5,s3,1e-6)
+  assertTrue(s2>s1)
+  assertTrue(s1>s3)
+ }
+
+ @Test fun balancedScorecardZeroCountsAndZeroMaximumSafety(){
+  assertEquals(0.0,KeywordTrends.combinedScore(0,0,0,0),1e-6)
+  assertEquals(25.0,KeywordTrends.combinedScore(5,0,10,0),1e-6)
+  assertEquals(25.0,KeywordTrends.combinedScore(0,5,0,10),1e-6)
+
+  val emptyResult=KeywordTrends.analyze(emptyList(),emptyList(),TrendFeedHealth(0,0,1_000_000L),0L,1_000_000L,"all")
+  assertTrue(emptyResult.report.keywords.isEmpty())
+ }
+
+ @Test fun balancedScorecardOrderingAndPreservedTieBreaking(){
+  val sA=KeywordTrends.combinedScore(10,2,10,2)
+  val sB=KeywordTrends.combinedScore(10,2,10,2)
+  assertEquals(sA,sB,1e-6)
+
+  val current=buildList{
+   repeat(10){i->add(trendArticle("a-$i","Alpha Tech",host="alphahost$i.example"))}
+   repeat(5){h->repeat(4){i->add(trendArticle("b-$h-$i","Beta Energy",host="betahost$h.example"))}}
+  }
+  val result=KeywordTrends.analyze(current,emptyList(),TrendFeedHealth(15,0,1_000_000L),0L,1_000_000L,"all")
+  val keywords=result.report.keywords
+  assertEquals(2,keywords.size)
+  assertEquals(75.0,KeywordTrends.combinedScore(keywords[0].currentArticles,keywords[0].currentPublishers,20,10),1e-6)
+  assertEquals(75.0,KeywordTrends.combinedScore(keywords[1].currentArticles,keywords[1].currentPublishers,20,10),1e-6)
+  assertEquals("beta energy",keywords[0].key)
+  assertEquals("alpha tech",keywords[1].key)
+
+  val tieCurrent=buildList{
+   repeat(3){i->add(trendArticle("z-$i","Zebra Energy",host="host$i.example"))}
+   repeat(3){i->add(trendArticle("a-$i","Apple Climate",host="host$i.example"))}
+  }
+  val tieResult=KeywordTrends.analyze(tieCurrent,emptyList(),TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")
+  val tieKeywords=tieResult.report.keywords.map{it.key}
+  assertEquals(listOf("apple climate","zebra energy"),tieKeywords)
+ }
 }
