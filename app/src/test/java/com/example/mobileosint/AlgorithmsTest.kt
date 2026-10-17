@@ -1115,4 +1115,93 @@ class AlgorithmsTest {
   val tieKeywords=tieResult.report.keywords.map{it.key}
   assertEquals(listOf("apple climate","zebra energy"),tieKeywords)
  }
+
+ @Test fun reportedExamplesNeverBecomeStandaloneTopicsWhileMultiwordPhrasesArePreserved(){
+  val enTerms=KeywordTrends.terms(trendArticle("en-1","Key economy urged in global economy and key interest rate",language="en"))
+  assertFalse("key must not be a standalone term",enTerms.containsKey("key"))
+  assertFalse("economy must not be a standalone term",enTerms.containsKey("economy"))
+  assertFalse("urged must not be a standalone term",enTerms.containsKey("urged"))
+  assertTrue("global economy phrase stays eligible",enTerms.containsKey("global economy"))
+  assertTrue("key interest rate phrase stays eligible",enTerms.containsKey("key interest rate"))
+
+  val ptTerms=KeywordTrends.terms(trendArticle("pt-1","Deste carro e economia em carro elétrico e Brasil economia",language="pt"))
+  assertFalse("deste must not be a standalone term",ptTerms.containsKey("deste"))
+  assertFalse("carro must not be a standalone term",ptTerms.containsKey("carro"))
+  assertFalse("economia must not be a standalone term",ptTerms.containsKey("economia"))
+  assertTrue("carro eletrico phrase stays eligible",ptTerms.containsKey("carro eletrico"))
+  assertTrue("brasil economia phrase stays eligible",ptTerms.containsKey("brasil economia"))
+
+  val articles=buildList{
+   for(i in 1..5){
+    add(trendArticle("en-art-$i","Key economy urged",body="Key economy urged by officials in key role",host="host$i.example",language="en"))
+    add(trendArticle("pt-art-$i","Notícias do dia",body="Deste fato e relatório no país",host="host$i.example",language="pt"))
+    add(trendArticle("phrase1-$i","Global economy",host="p1host$i.example",language="en"))
+    add(trendArticle("phrase2-$i","Key interest rate",host="p2host$i.example",language="en"))
+    add(trendArticle("phrase3-$i","Carro elétrico",host="p3host$i.example",language="pt"))
+    add(trendArticle("phrase4-$i","Brasil economia",host="p4host$i.example",language="pt"))
+   }
+  }
+
+  val report=KeywordTrends.analyze(articles,articles,TrendFeedHealth(30,0,1_000_000L),0L,1_000_000L,"all").report
+  val keys=report.keywords.map{it.key}
+
+  assertFalse("carro card: $keys",keys.contains("carro"))
+  assertFalse("key card: $keys",keys.contains("key"))
+  assertFalse("urged card: $keys",keys.contains("urged"))
+  assertFalse("economy card: $keys",keys.contains("economy"))
+  assertFalse("deste card: $keys",keys.contains("deste"))
+
+  assertTrue("global economy card: $keys",keys.contains("global economy"))
+  assertTrue("key interest rate card: $keys",keys.contains("key interest rate"))
+  assertTrue("carro eletrico card: $keys",keys.contains("carro eletrico"))
+  assertTrue("brasil economia card: $keys",keys.contains("brasil economia"))
+ }
+
+ @Test fun specificityFormulaMultiWordBoostAndSingleWordSaturationPenalty(){
+  // Rule A: Multi-Word Boost (1.3x for 2 words, 1.5x for 3+ words)
+  val baseScore1Word = KeywordTrends.combinedScore(5, 5, 5, 5, wordCount = 1, totalArticles = 100) // penetration 5% <= 40%
+  val baseScore2Word = KeywordTrends.combinedScore(5, 5, 5, 5, wordCount = 2, totalArticles = 100)
+  val baseScore3Word = KeywordTrends.combinedScore(5, 5, 5, 5, wordCount = 3, totalArticles = 100)
+
+  assertEquals(100.0, baseScore1Word, 1e-6)
+  assertEquals(130.0, baseScore2Word, 1e-6) // 100.0 * 1.3
+  assertEquals(150.0, baseScore3Word, 1e-6) // 100.0 * 1.5
+  assertTrue("2-word phrase outranks 1-word term with identical volume", baseScore2Word > baseScore1Word)
+  assertTrue("3-word phrase outranks 2-word phrase with identical volume", baseScore3Word > baseScore2Word)
+
+  // Rule B: Single-Word Saturation Penalty (0.5x if 1-word term appears in > 40% of articles)
+  val saturated1Word = KeywordTrends.combinedScore(5, 5, 5, 5, wordCount = 1, totalArticles = 10) // penetration 50% > 40%
+  assertEquals(50.0, saturated1Word, 1e-6) // 100.0 * 1.0 * 0.5
+
+  // Multi-word phrases are NOT penalized for saturation (> 40% penetration)
+  val saturated2Word = KeywordTrends.combinedScore(5, 5, 5, 5, wordCount = 2, totalArticles = 10) // penetration 50%
+  assertEquals(130.0, saturated2Word, 1e-6) // 100.0 * 1.3 * 1.0
+ }
+
+ @Test fun twoWordPhraseOutranksSingleWordTermWithIdenticalVolumeInAnalyze(){
+  val articles = buildList {
+   repeat(5) { i -> add(trendArticle("art-$i", "Solar Energy", body = "Solar energy.", host = "host$i.example", language = "en")) }
+   repeat(5) { i -> add(trendArticle("art2-$i", "Inflation", body = "Inflation.", host = "otherhost$i.example", language = "en")) }
+  }
+  val result = KeywordTrends.analyze(articles, emptyList(), TrendFeedHealth(10, 0, 1_000_000L), 0L, 1_000_000L, "en")
+  val keywords = result.report.keywords
+  assertTrue("Solar energy phrase should be extracted: ${keywords.map { it.key }}", keywords.any { it.key == "solar energy" })
+  assertTrue("Inflation single word should be extracted: ${keywords.map { it.key }}", keywords.any { it.key == "inflation" })
+
+  val solarEnergyIndex = keywords.indexOfFirst { it.key == "solar energy" }
+  val inflationIndex = keywords.indexOfFirst { it.key == "inflation" }
+  assertTrue("2-word phrase 'solar energy' must outrank single-word term 'inflation'", solarEnergyIndex < inflationIndex)
+ }
+
+ @Test fun newStopwordAndPhraseOnlyListInclusions(){
+  val ptTerms = KeywordTrends.terms(trendArticle("deixa-test", "Ele deixa a cidade hoje", language = "pt"))
+  assertFalse("deixa must be filtered as a Portuguese stopword", ptTerms.containsKey("deixa"))
+
+  val phraseTerms = KeywordTrends.terms(trendArticle("phrase-only-test", "Acidente grave no interior da cidade e Banco Central", language = "pt"))
+  assertFalse("acidente must not be extracted as standalone term", phraseTerms.containsKey("acidente"))
+  assertFalse("interior must not be extracted as standalone term", phraseTerms.containsKey("interior"))
+  assertFalse("central must not be extracted as standalone term", phraseTerms.containsKey("central"))
+  assertTrue("acidente grave phrase should survive", phraseTerms.containsKey("acidente grave"))
+  assertTrue("banco central phrase should survive", phraseTerms.containsKey("banco central"))
+ }
 }

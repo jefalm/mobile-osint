@@ -47,10 +47,26 @@ object KeywordReportCodec {
 object KeywordTrends {
  /** Optional debug hook for inspecting the real trend inputs. Null by default; emits IDs and scores, never article text. */
  @Volatile var standaloneDiagnosticSink:((List<StandaloneTrendDiagnostic>)->Unit)?=null
- internal fun combinedScore(articleCount:Int,distinctHostCount:Int,maxArticleCount:Int,maxHostCount:Int):Double{
+ internal fun combinedScore(articleCount:Int,distinctHostCount:Int,maxArticleCount:Int,maxHostCount:Int,wordCount:Int=1,totalArticles:Int=0):Double{
   val volumeScore=if(maxArticleCount>0)100.0*articleCount/maxArticleCount else 0.0
   val diversityScore=if(maxHostCount>0)100.0*distinctHostCount/maxHostCount else 0.0
-  return (volumeScore+diversityScore)/2.0
+  val baseScore=(volumeScore+diversityScore)/2.0
+  val multiWordBoost=when{
+   wordCount>=3->1.5
+   wordCount==2->1.3
+   else->1.0
+  }
+  val saturationPenalty=if(wordCount==1&&totalArticles>0){
+   val penetrationRate=articleCount.toDouble()/totalArticles
+   if(penetrationRate>0.05)0.5 else 1.0
+  }else{
+   1.0
+  }
+  return baseScore*multiWordBoost*saturationPenalty
+ }
+ internal fun combinedScore(articleCount:Int,distinctHostCount:Int,maxArticleCount:Int,maxHostCount:Int,term:String,totalArticles:Int=0):Double{
+  val wordCount=term.trim().split(Regex("\\s+")).filter{it.isNotBlank()}.size.coerceAtLeast(1)
+  return combinedScore(articleCount,distinctHostCount,maxArticleCount,maxHostCount,wordCount,totalArticles)
  }
  internal fun inputProvenance(start:Long,end:Long,previousStart:Long,baselineComplete:Boolean,languages:List<String>,allSources:Boolean,selectedSourceIds:List<String>,filters:ResearchFilters,topicPattern:String,alternateTopicPattern:String,current:List<TrendArticle>,previous:List<TrendArticle>)=TrendInputProvenance(
   start,end,previousStart,baselineComplete,languages.distinct().sorted(),allSources,selectedSourceIds.distinct().sorted(),filters.sourceIds.sorted(),filters.publishers.sorted(),filters.topic,topicPattern,alternateTopicPattern,true,
@@ -67,9 +83,9 @@ object KeywordTrends {
   return Window(start,end,precedingStart,precedingStart>=retentionStart)
  }
  private val englishStop=("a an and are as at be been before but by can did do does for from had has have he he's her hers him his how i if in into is it its may me my not of on one or other our out over per s she that their the there these this those to us was we week weeks were what when where which while who will with would year years you your "+
-  "about after also all any each even first here just more most much now only said say she some than them then they through too under up very we were why yet could should would might likely meanwhile reports reported says").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
- private val portugueseStop=("a ano anos as ao aos apos ate com como da das de dela dele depois deve devem do dos e em enquanto entre essa esse esta estao estava estavam este eu foi foram ha isso ja mais mas me meu minha na nas nao nesta neste no nos o os ou para pela pelo por porque que sao se sem seu sua seus suas ser sera serao sendo sobre tambem tem ter tu um uma uns umas presidente "+
-  "ainda alguns algumas antes assim ate cada contra debaixo desde dia dias durante eles elas ela ele era eram essa essas esse esses estas estes eu hoje inicio mesmo muito muita muitos muitas nossa nossas nosso nossos onde pela pelas pelo pelos pode podem poderia podera pois qual quando quem se serao sido sob suas todo toda todos todas vai vao voce voces").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
+  "about after also all any each even first here just more most much now only said say she some than them then they through too under up very we were why yet could should would might likely meanwhile reports reported says urged urges").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
+ private val portugueseStop=("a ano anos as ao aos apos ate com como da das de deixa dela dele depois deve devem do dos e em enquanto entre essa esse esta estao estava estavam este eu foi foram ha isso ja mais mas me meu minha na nas nao nesta neste no nos o os ou para pela pelo por porque que sao se sem seu sua seus suas ser sera serao sendo sobre tambem tem ter tu um uma uns umas presidente "+
+  "ainda alguns algumas antes assim ate cada contra debaixo deste destes destas desde dia dias durante eles elas ela ele era eram essa essas esse esses estas estes eu hoje inicio mesmo muito muita muitos muitas nossa nossas nosso nossos onde pela pelas pelo pelos pode podem poderia podera pois qual quando quem se serao sido sob suas todo toda todos todas vai vao voce voces").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
  private val noise=("article articles breaking click comment comments continue daily edition feed feeds follow followers following headline headlines homepage latest like likes live menu more new news newsletter photo photograph photo credits copyright post posts privacy privacy policy read read more report reports reported reply replies response responses rights reserved said says share shares shared sharing source sources story stories subscribe subscribers subscription terms today top trending trend trends update updates yesterday " +
    "artigo artigos assine assinatura assinar comentarios comentario comentar confira curtir curtidas desta desta-feira diz disse fonte fontes hoje inscreva-se jornal leia leia mais noticia noticias novo nova novos novas pagina publicidade responder resposta respostas saiba saiba mais segundo seguidores seguir veja veja mais veja tambem segunda-feira terca-feira quarta-feira quinta-feira sexta-feira sabado domingo monday tuesday wednesday thursday friday saturday sunday getty images clique aqui").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
   private val boilerplate=Regex("(?i)\\b(?:ap news|europe live|breaking news|latest news|read more|continue reading|click\\s+here|clique\\s+aqui|clique|aqui|click|here|share this|skip to content|leia mais|saiba mais|veja tamb[eé]m|leave a comment|add a comment|no comments|post a comment)\\b")
@@ -80,9 +96,9 @@ object KeywordTrends {
  /** Standalone-uninformative terms for every language mode: filtered as single tokens, still eligible inside 2-3 word phrases. */
  private val phraseOnlyTerms=setOf("access", "according", "administration", "against", "ahead", "amid", "announced", "appeared", "attacks", "authorities", "back", "being", "between", "big", "brazil", "brasil", "campaign", "chief", "children", "city", "company", "country", "court", "data", "day", "days", "deal", "development", "dois", "down", "during", "election", "elementary", "end", "federal", "fire", "former", "future", "game", "global", "government", "group", "hit", "home", "including", "killed", "last", "leaders", "least", "life", "made", "major", "make", "man", "market", "media", "midterm", "military", "million", "month", "near", "next", "night", "off", "officials", "oil", "party", "people", "pessoas", "point", "points", "police", "political", "president", "press", "prices", "rio", "school", "season", "secretary", "series", "set", "shooter", "shooting", "show", "since", "state", "still", "support", "take", "three", "time", "times", "told", "two", "vida", "voters", "war", "win", "world").map(::key).toSet()
  /** Portuguese equivalents of the background terms above, so both languages are filtered equivalently; standalone use only. */
- private val portuguesePhraseOnlyTerms=phraseOnlyTerms+setOf("acesso","acordo","agora","anuncio","anuncios","ataque","ataques","autoridade","autoridades","assunto","assuntos","base","bases","campanha","caso","casos","cidade","cidades","coisa","coisas","conta","contas","crianca","criancas","dado","dados","desenvolvimento","eleicao","eleicoes","eleitor","eleitores","empresa","empresas","escola","estado","estados","fato","fatos","forma","formas","frente","frentes","futuro","gente","governo","grande","grandes","grupo","guerra","homem","imprensa","incendio","incendios","lado","lados","lider","lideres","maior","maiores","mercado","menor","menores","mes","meses","meio","midia","militar","militares","milhao","milhoes","momento","momentos","mundo","noite","nome","nomes","numero","numeros","ontem","pais","paises","parte","partes","partido","petroleo","policia","ponto","pontos","prazo","prazos","preco","precos","primeira","primeiro","secretario","semana","semanas","temporada","tempo","tipo","tipos","tribunal","ultima","ultimas","ultimo","ultimos","valor","valores","vez","vezes","vitoria","vitorias").map(::key).toSet()
+ private val portuguesePhraseOnlyTerms=phraseOnlyTerms+setOf("acesso","acordo","acidente","agora","anuncio","anuncios","ataque","ataques","autoridade","autoridades","assunto","assuntos","base","bases","campanha","carro","carros","caso","casos","central","cidade","cidades","coisa","coisas","conta","contas","crianca","criancas","dado","dados","desenvolvimento","economia","eleicao","eleicoes","eleitor","eleitores","empresa","empresas","escola","estado","estados","fato","fatos","forma","formas","frente","frentes","futuro","gente","governo","grande","grandes","grupo","guerra","homem","imprensa","incendio","incendios","interior","lado","lados","lider","lideres","maior","maiores","mercado","menor","menores","mes","meses","meio","midia","militar","militares","milhao","milhoes","momento","momentos","mundo","noite","nome","nomes","numero","numeros","ontem","pais","paises","parte","partes","partido","petroleo","policia","ponto","pontos","prazo","prazos","preco","precos","primeira","primeiro","secretario","semana","semanas","temporada","tempo","tipo","tipos","tribunal","ultima","ultimas","ultimo","ultimos","valor","valores","vez","vezes","vitoria","vitorias").map(::key).toSet()
  /** English generic vocabulary that stays available inside phrases but must not become a topic on frequency alone. */
- private val englishPhraseOnlyTerms=phraseOnlyTerms+setOf("part","parts","case","cases","thing","things","way","ways","issue","issues","question","questions","subject","subjects","many","several","various","number","numbers").map(::key).toSet()
+ private val englishPhraseOnlyTerms=phraseOnlyTerms+setOf("part","parts","case","cases","thing","things","way","ways","issue","issues","question","questions","subject","subjects","many","several","various","number","numbers","economy","key").map(::key).toSet()
  private val ambiguousPhraseOnlyTerms=englishPhraseOnlyTerms+portuguesePhraseOnlyTerms
  /** A known language uses its own generic vocabulary; an ambiguous one keeps both, like the existing stopword convention. */
  private fun phraseOnly(language:String)=when(language){"pt"->portuguesePhraseOnlyTerms;"en"->englishPhraseOnlyTerms;else->ambiguousPhraseOnlyTerms}
@@ -207,15 +223,23 @@ object KeywordTrends {
       continue
      }
      candidateSelectionReasons.remove(candidate.key)
-    val parent=ranked.firstOrNull{chosen->
-     overlappingPhrases(chosen.key,candidate.key)||variationsByParent[chosen.key].orEmpty().any{overlappingPhrases(it,candidate.key)}
+    val candidateIds = candidate.value.map { it.id }.toSet()
+    val candidatePrior = previousIndex[candidate.key].orEmpty().map { it.id }.toSet()
+
+    val parent = ranked.firstOrNull { chosen ->
+     val chosenIds = chosen.value.map { it.id }.toSet()
+     val textOverlap = overlappingPhrases(chosen.key, candidate.key) || variationsByParent[chosen.key].orEmpty().any { overlappingPhrases(it, candidate.key) }
+     val articleOverlap = candidateIds.isNotEmpty() && chosenIds.isNotEmpty() &&
+             (candidateIds.intersect(chosenIds).size.toDouble() / candidateIds.union(chosenIds).size >= 0.5)
+
+     textOverlap || articleOverlap
     }
-    if(parent!=null){
-      candidateSelectionReasons[candidate.key]="Grouped as a variation of ${parent.key} by the existing phrase-overlap rule"
-      variationsByParent.getOrPut(parent.key){linkedSetOf()}.add(candidate.key)
+
+    if (parent != null) {
+     candidateSelectionReasons[candidate.key] = "Grouped as a variation of ${parent.key} due to text or article overlap"
+     variationsByParent.getOrPut(parent.key) { linkedSetOf() }.add(candidate.key)
      continue
     }
-    val candidateIds=candidate.value.map{it.id}.toSet();val candidatePrior=previousIndex[candidate.key].orEmpty().map{it.id}.toSet()
     val overlap=ranked.any{chosen->
      val chosenIds=chosen.value.map{it.id}.toSet();val chosenPrior=previousIndex[chosen.key].orEmpty().map{it.id}.toSet()
      chosen.key.split(' ').size>1&&candidate.key.split(Regex("\\s+")).any{it in chosen.key.split(Regex("\\s+"))}&&candidateIds.size>=2&&publisherCount(candidate.value)>=2&&
@@ -261,12 +285,17 @@ object KeywordTrends {
    countRise->"more articles than the previous window but no larger share of eligible articles; no verified trend"
     else->"no supported increase"
    }
-  val label=terms(articles.first())[term]?:term
-  val variationLabels=variationKeys.map{key->currentIndex[key]?.firstOrNull()?.let{terms(it)[key]?:key}?:key}
-  val cardLineStart=lines.size
-  val cardSupportStart=supporting.size
-  lines.add("\n$label: ${currentArticles.size} articles / $currentPublishers publishers; previous ${previousArticles.size} articles / $previousPublishers publishers. $status.")
-  keywords.add(TrendKeyword(term,label,currentArticles.size,currentPublishers,previousArticles.size,previousPublishers,status,currentArticles.take(100).map{article->TrendSupport(article.title,article.url,publisher(article)?:"publisher unknown",article.publishedAt,article.firstSeenAt,excerpt(article,term))},variationLabels.takeIf{it.isNotEmpty()}))
+   val label=terms(articles.first())[term]?:term
+   val variationLabels=variationKeys.map{key->currentIndex[key]?.firstOrNull()?.let{terms(it)[key]?:key}?:key}
+   val cardLineStart=lines.size
+   val cardSupportStart=supporting.size
+   lines.add("\n$label: ${currentArticles.size} articles / $currentPublishers publishers; previous ${previousArticles.size} articles / $previousPublishers publishers. $status.")
+
+   if (variationLabels.isNotEmpty()) {
+    lines.add("Also covers: ${variationLabels.joinToString(", ")}")
+   }
+
+   keywords.add(TrendKeyword(term,label,currentArticles.size,currentPublishers,previousArticles.size,previousPublishers,status,currentArticles.take(100).map{article->TrendSupport(article.title,article.url,publisher(article)?:"publisher unknown",article.publishedAt,article.firstSeenAt,excerpt(article,term))},variationLabels.takeIf{it.isNotEmpty()}))
   currentArticles.distinctBy{publisher(it)?:"feed:${it.sourceId}"}.take(2).forEach{article->
     lines.add("- ${article.title} (${publisher(article)?:"publisher unknown"}; ${if(article.publishedAt!=null)"published ${TrendDisplay.time(article.publishedAt)}" else "first seen ${TrendDisplay.time(article.firstSeenAt)}, publication unknown"})\n  ${article.url}")
     supporting.add(article)
@@ -276,13 +305,22 @@ object KeywordTrends {
   }
   val maxArticleCount=keywords.maxOfOrNull{it.currentArticles}?:0
   val maxHostCount=keywords.maxOfOrNull{it.currentPublishers}?:0
+  val totalRunArticles=recent.size
   val sortedIndices=keywords.indices.sortedWith(
-   compareByDescending<Int>{combinedScore(keywords[it].currentArticles,keywords[it].currentPublishers,maxArticleCount,maxHostCount)}
+   compareByDescending<Int>{combinedScore(keywords[it].currentArticles,keywords[it].currentPublishers,maxArticleCount,maxHostCount,keywords[it].key,totalRunArticles)}
     .thenByDescending{keywords[it].currentArticles}
     .thenByDescending{keywords[it].currentPublishers}
     .thenBy{keywords[it].key}
   )
   val sortedKeywords=sortedIndices.map{keywords[it]}
+  sortedKeywords.take(8).forEachIndexed { rank, kw ->
+   val wordCount = kw.key.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size.coerceAtLeast(1)
+   val score = combinedScore(kw.currentArticles, kw.currentPublishers, maxArticleCount, maxHostCount, kw.key, totalRunArticles)
+   val penRate = if (totalRunArticles > 0) kw.currentArticles.toDouble() / totalRunArticles else 0.0
+   val boost = when { wordCount >= 3 -> 1.5; wordCount == 2 -> 1.3; else -> 1.0 }
+   val penalty = if (wordCount == 1 && penRate > 0.40) 0.5 else 1.0
+   Log.d("SpecificityFormula", "TOP_KEYWORDS Rank ${rank + 1}: label='${kw.label}', key='${kw.key}', wordCount=$wordCount, articles=${kw.currentArticles}, publishers=${kw.currentPublishers}, totalArticles=$totalRunArticles, penRate=${"%.4f".format(penRate)}, boost=${boost}, penalty=${penalty}, combinedScore=${"%.4f".format(score)}")
+  }
    if(standaloneDiagnosticSink!=null||diagnosticCapture!=null){
    val candidateRanks=candidates.mapIndexed{index,entry->entry.key to index+1}.toMap()
    val selectedParents=ranked.mapIndexed{index,entry->entry.key to index+1}.toMap()
