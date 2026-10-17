@@ -52,8 +52,8 @@ object KeywordTrends {
   val diversityScore=if(maxHostCount>0)100.0*distinctHostCount/maxHostCount else 0.0
   val baseScore=(volumeScore+diversityScore)/2.0
   val multiWordBoost = when {
-   wordCount >= 4 -> 2.2  // Multi-word phrase boost
-   wordCount == 3 -> 1.8  // Progressive triplet boost
+   wordCount >= 4 -> 1.5  // Multi-word phrase boost
+   wordCount == 3 -> 1.5  // Progressive triplet boost
    wordCount == 2 -> 1.3  // Standard doublet weight
    else -> 1.0
   }
@@ -88,15 +88,15 @@ object KeywordTrends {
   "about after also all any each even first here just more most much now only said say she some than them then they through too under up very we were why yet could should would might likely meanwhile reports reported says urged urges").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
  private val portugueseStop=("a ano anos as ao aos apos ate com como da das de deixa dela dele depois deve devem do dos e em enquanto entre essa esse esta estao estava estavam este eu foi foram ha isso ja mais mas me meu minha na nas nao nesta neste no nos o os ou para pela pelo por porque que sao se sem seu sua seus suas ser sera serao sendo sobre tambem tem ter tu um uma uns umas presidente "+
   "ainda alguns algumas antes assim ate cada contra debaixo deste destes destas desde dia dias durante eles elas ela ele era eram essa essas esse esses estas estes eu hoje inicio mesmo muito muita muitos muitas nossa nossas nosso nossos onde pela pelas pelo pelos pode podem poderia podera pois qual quando quem se serao sido sob suas todo toda todos todas vai vao voce voces").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
- private val noise=("article articles click clicks comment comments continue edition editions feed feeds follower followers following headline headlines homepage menu newsletter newsletters post posts privacy reply replies response responses rights reserved share shares shared sharing source sources story stories subscribe subscriber subscribers subscription subscriptions submitted terms copyright photo photos photograph photographs gallery galleries picture pictures graphic graphics interactive transcript transcripts image images video videos link links audio podcast podcasts " +
+ private val noise=("article articles click clicks comment comments continue edition editions feed feeds follow follower followers following headline headlines homepage like likes menu newsletter newsletters post posts privacy reply replies response responses rights reserved share shares shared sharing source sources story stories subscribe subscriber subscribers subscription subscriptions submitted terms copyright photo photos photograph photographs gallery galleries picture pictures graphic graphics interactive transcript transcripts image images video videos link links audio podcast podcasts " +
          "artigo artigos assine assinatura assinaturas assinar comentario comentarios comentar confira curtir curtida curtidas fonte fontes hoje inscreva-se jornal jornais leia noticia noticias novo nova novos novas pagina paginas publicidade responder resposta respostas saiba segundo seguidores seguir veja tambem getty images clique aqui " +
-         "manha madrugada morning mornings afternoon afternoons evening evenings night nights midnight dawn hora horas minuto minutos segundo segundos hour hours minute minutes second seconds instante instantes momento momentos instant instants moment moments " +
-         "janeiro fevereiro marco abril maio junho julho agosto setembro outubro novembro dezembro january february march april may june july august september october november december " +
+         "manha madrugada afternoon afternoons evening evenings night nights midnight dawn hora horas minuto minutos segundo segundos hour hours minute minutes second seconds instante instantes momento momentos instant instants moment moments " +
+         "" +
          "segunda-feira terca-feira quarta-feira quinta-feira sexta-feira sabado domingo monday tuesday wednesday thursday friday saturday sunday " +
-         "zero um uma dois duas tres quatro cinco seis sete oito nove dez cento cem mil milhao milhoes bilhao bilhoes one two three four five six seven eight nine ten hundred thousand million billion first second third fourth fifth " +
+         "zero um uma dois duas tres quatro cinco seis sete oito nove dez cento cem mil milhao milhoes bilhao bilhoes one three four five six seven eight nine ten hundred thousand million billion first second third fourth fifth " +
          "galeria galerias foto fotos imagem imagens video videos link links audio podcast podcasts credito creditos autoria parceria parcerias " +
          "national international regional general public private exclusive report newsroom agency text texts image images picture pictures video videos link links audio podcast podcasts credit credits authorship partnership " +
-         "galeria de fotos leia mais saiba mais veja mais veja tambem read more privacy policy terms of service terms and conditions photo gallery photo credit image credit all rights reserved follow us click here continue reading related articles related stories read online full coverage click to expand ").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet()
+         "galeria de fotos leia mais saiba mais veja mais veja tambem read more privacy policy terms of service terms and conditions photo gallery photo credit image credit all rights reserved follow us click here continue reading related articles related stories read online full coverage click to expand ").split(Regex("\\s+")).filter{it.isNotBlank()}.map(::key).toSet() - englishStop - portugueseStop
  private val boilerplate=Regex("(?i)\\b(?:url|ap news|europe live|breaking news|latest news|read more|continue reading|click\\s+here|clique\\s+aqui|clique|aqui|click|here|share this|skip to content|leia mais|saiba mais|veja tamb[eé]m|leave a comment|add a comment|no comments|post a comment)\\b")
  private val markup=Regex("(?is)<(?:script|style)\\b[^>]*>.*?</(?:script|style)>|<[^>]+>|&(?:#\\d+|#x[0-9a-f]+|[a-z]+);")
  private val urls=Regex("(?i)\\b(?:https?://|www\\.)[^\\s<>]+")
@@ -473,6 +473,31 @@ object RefreshRunner {
   }
  }
 }
+/** Canonical URL key used to recognise two stored rows as one story. */
+fun storyUrlKey(value:String)=value.trim().lowercase(Locale.ROOT)
+
+/**
+ * Returns the redundant older rows for any URL that is stored more than once. The row with the
+ * newest first-seen time survives (ties fall back to the most recent effective date, then the id),
+ * so a story re-ingested under the current identity supersedes the historical row it replaced and
+ * one cleanup pass converges.
+ */
+fun redundantStoryRows(rows:List<ArticleEntity>):List<ArticleEntity> =
+ rows.groupBy{storyUrlKey(it.url)}.values.filter{it.size>1}.flatMap{group->
+  group.sortedWith(compareByDescending<ArticleEntity>{it.firstSeenAt}.thenByDescending{it.effectiveAt}.thenByDescending{it.id}).drop(1)
+ }
+
+/**
+ * Global story identity for a stored article row. The feed/source id is deliberately absent so the
+ * same story delivered by two feeds of one publisher host maps to one row, while a different
+ * publisher host or a different headline keeps its own row. The item identity is only used when the
+ * headline is unusable, so distinct untitled items can never collide.
+ */
+fun storyId(source:SourceEntity,item:FeedItem):String{
+ val host=LocalRetriever.publisher(source.url)?:"feed"
+ val title=item.title.trim().lowercase(Locale.ROOT)
+ return Algorithms.hash(if(title.isBlank())"$host:${item.identity}" else "$host:$title")
+}
 fun sourceStillCurrent(current:SourceEntity?,snapshot:SourceEntity)=current!=null&&current.enabled&&current.revision==snapshot.revision
 
 object FeedImporter {
@@ -590,7 +615,7 @@ class ResearchService(val db:AppDatabase,val settings:Settings,private val rss:F
  suspend fun setTags(id:String,value:String){require(value.length<=200&&'\n' !in value){"Tags must be one comma-separated line (up to 200 characters)"};db.withTransaction{val s=dao.source(id)?:return@withTransaction;dao.updateSource(s.copy(tags=value.split(',').map{it.trim()}.filter{it.isNotBlank()}.distinct().joinToString(", ")))}}
  suspend fun setAllFeedsEnabled(enabled:Boolean){ready.await();db.withTransaction{dao.setAllFetchEnabled(enabled)}}
  suspend fun deleteSource(id:String){db.withTransaction{dao.deleteSource(id)}}
- data class CleanupResult(val expiredCount:Int=0,val prunedCount:Int=0)
+ data class CleanupResult(val expiredCount:Int=0,val prunedCount:Int=0,val dedupedCount:Int=0)
 
 suspend fun cleanup():CleanupResult{
  val c=settings.config()
@@ -602,8 +627,21 @@ suspend fun cleanup():CleanupResult{
   dao.capSeen()
   dao.capSyncRuns()
  }
- return CleanupResult(expired,pruned)
+ return CleanupResult(expired,pruned,pruneDuplicateStories())
 }
+ /**
+  * Application-layer cleanup for historical duplication: reads the retained rows, groups them by
+  * story URL and deletes the older redundant rows with a Room @Delete, keeping the newest row per
+  * URL. It only deletes rows through the DAO - never the schema, source rows or reports - and chunk
+  * removal is handled by the existing ON DELETE CASCADE relationship.
+  */
+ suspend fun pruneDuplicateStories():Int{
+  val redundant=redundantStoryRows(dao.storedArticles())
+  if(redundant.isEmpty())return 0
+  db.withTransaction{dao.deleteArticles(redundant)}
+  Log.d("MobileOsintDiag","Pruned ${redundant.size} duplicate story row(s)")
+  return redundant.size
+ }
  private fun emitSyncTelemetry(run:SyncRunEntity,logs:List<FeedSyncLogEntity>){
   val summaryLine="[SYNC_RUN] status=${run.status}, duration=${run.durationMs}ms, feeds=${run.totalFeeds} (${run.successfulFeeds} ok, ${run.failedFeeds} failed), items: +${run.itemsAdded} added, ${run.itemsUpdated} updated, ${run.itemsExpired} expired, ${run.itemsPruned} pruned"
   val jsonPayload=JSONObject().apply{
@@ -654,7 +692,7 @@ suspend fun cleanup():CleanupResult{
       val current=dao.source(source.id)
       if(current==null||!sourceStillCurrent(current,source))return@withTransaction
       for(item in feed.items){
-       val id=Algorithms.hash(source.id+":"+item.identity);val old=dao.article(id)
+       val id=storyId(source,item);val old=dao.article(id)
        val first=dao.seen(id)?.firstSeenAt?:old?.firstSeenAt?:now;dao.remember(SeenEntity(id,source.id,first));val published=item.publishedAt?.takeIf{it<=now+300_000L}
        val effective=published?:first
        if(effective<cutoff){expiredCount++;continue}

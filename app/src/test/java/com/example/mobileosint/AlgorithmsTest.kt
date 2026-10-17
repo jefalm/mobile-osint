@@ -163,6 +163,25 @@ class AlgorithmsTest {
   assertEquals(setOf("https://one.example/a","https://two.example/b"),topic.supports.map{it.url}.toSet())
   assertFalse(result.report.keywords.any{it.key=="shipment"})
  }
+ @Test fun storyIdentityCollapsesSameHostHeadlineButKeepsOtherStories(){
+  val g1=SourceEntity("source-main","https://g1.globo.com/rss/g1/","g1")
+  val g1Topic=SourceEntity("source-topico","https://g1.globo.com/rss/g1/educacao/","g1 Educacao")
+  val other=SourceEntity("source-other","https://outra.example/rss","Outra Agencia")
+  fun item(title:String,identity:String)=FeedItem(identity,title,"https://g1.globo.com/x.ghtml","body",null)
+  val shared=storyId(g1,item("Estudantes denunciam deputada federal","https://g1.globo.com/x.ghtml"))
+  assertEquals("two feeds of one publisher host must store a single row",shared,storyId(g1Topic,item("Estudantes denunciam deputada federal","https://g1.globo.com/x.ghtml")))
+  assertNotEquals("a different publisher host keeps its own row",shared,storyId(other,item("Estudantes denunciam deputada federal","https://g1.globo.com/x.ghtml")))
+  assertNotEquals("a different headline keeps its own row",shared,storyId(g1,item("Outro assunto","https://g1.globo.com/y.ghtml")))
+  assertNotEquals("untitled items can never collide",storyId(g1,item("","guid-1")),storyId(g1,item("","guid-2")))
+ }
+ @Test fun duplicateStoryRowsPruneOlderCopiesAndKeepTheNewestRow(){
+  fun row(id:String,url:String,firstSeenAt:Long)=ArticleEntity(id,"source","Estudantes denunciam deputada federal",url,"body",null,firstSeenAt,firstSeenAt,"hash")
+  val survivor=row("row-new","https://g1.globo.com/x.ghtml",1_760_000_300_000L)
+  val older=row("row-old","https://g1.globo.com/x.ghtml",1_760_000_000_000L)
+  val unrelated=row("row-other","https://g1.globo.com/y.ghtml",1_760_000_000_000L)
+  assertEquals("only the older copy of the shared URL is redundant",listOf("row-old"),redundantStoryRows(listOf(older,survivor,unrelated)).map{it.id})
+  assertTrue("a URL stored once is never pruned",redundantStoryRows(listOf(survivor,unrelated)).isEmpty())
+ }
  @Test fun matchingNameFragmentsShareOneCardButIndependentComponentRemains(){
   val current=listOf(trendArticle("a","Luiz Inácio Lula da Silva anuncia reforma",host="one.example"),trendArticle("b","Luiz Inácio Lula da Silva comenta reforma",host="two.example"),trendArticle("c","Silva lidera projeto cultural",host="three.example"),trendArticle("d","Silva apresenta exposição",host="four.example"))
   val previous=listOf(trendArticle("e","Luiz Inácio Lula da Silva anuncia plano",host="one.example"),trendArticle("f","Luiz Inácio Lula da Silva comenta plano",host="two.example"),trendArticle("g","Silva prepara exposição",host="three.example"))

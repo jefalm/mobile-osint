@@ -50,6 +50,9 @@ data class TrendSourceRefresh(val id:String,val lastSuccess:Long)
  @Query("DELETE FROM articles WHERE sourceId=:sourceId AND (instr(title,char(65533))>0 OR instr(body,char(65533))>0)") suspend fun deleteCorruptArticles(sourceId:String):Int
  @Query("DELETE FROM articles WHERE effectiveAt < :cutoff") suspend fun expire(cutoff:Long):Int
  @Query("DELETE FROM articles WHERE id NOT IN (SELECT id FROM articles ORDER BY effectiveAt DESC,id LIMIT :cap)") suspend fun cap(cap:Int):Int
+ @Query("SELECT * FROM articles ORDER BY firstSeenAt DESC,effectiveAt DESC,id DESC LIMIT 5000") suspend fun storedArticles():List<ArticleEntity>
+ /** Deletes whole rows by primary key; child chunks follow the existing ON DELETE CASCADE relationship. */
+ @Delete suspend fun deleteArticles(articles:List<ArticleEntity>)
  @Query("SELECT COUNT(*) FROM articles") fun count():Flow<Int>
 
  @Insert suspend fun addSyncRun(run:SyncRunEntity)
