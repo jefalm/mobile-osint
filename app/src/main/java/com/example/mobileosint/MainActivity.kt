@@ -94,7 +94,8 @@ object TrendDisplay {
  val context=LocalContext.current
  var expanded by remember(keyword.key){mutableStateOf(false)}
  var visible by remember(keyword.key){mutableIntStateOf(6)}
- val variations=keyword.variations.orEmpty()
+ // Fresh reports carry the ranking pass's grouped-phrases metadata; older saved reports only carry the raw variations.
+ val coverage=keyword.metadata?.takeIf{it.isNotBlank()} ?: KeywordTrends.variationMetadata(keyword.variations.orEmpty())
  Card(Modifier.fillMaxWidth()){
   Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
   Row(verticalAlignment=Alignment.CenterVertically){
@@ -106,11 +107,7 @@ object TrendDisplay {
     Icon(Icons.Filled.Search,contentDescription="Search on Google")
    }
   }
-  if(variations.isNotEmpty()){
-   val shown=variations.take(2)
-   val remaining=variations.size-shown.size
-   Text("Also covers: ${shown.joinToString(", ")}${if(remaining>0)" (+$remaining more)" else ""}",style=MaterialTheme.typography.bodySmall)
-  }
+  if(coverage!=null)Text(coverage,style=MaterialTheme.typography.bodySmall)
    Text("Now ${keyword.currentArticles} articles / ${keyword.currentPublishers} hosts · Before ${keyword.previousArticles} articles / ${keyword.previousPublishers} hosts",style=MaterialTheme.typography.bodyMedium)
    Text(keyword.status,style=MaterialTheme.typography.bodySmall)
   TextButton(onClick={expanded=!expanded}){Text(if(expanded)"Hide articles" else "Show supporting articles (${keyword.supports.size}${if(keyword.currentArticles>keyword.supports.size)" of ${keyword.currentArticles}" else ""})")}

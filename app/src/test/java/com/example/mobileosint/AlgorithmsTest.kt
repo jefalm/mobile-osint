@@ -144,6 +144,31 @@ class AlgorithmsTest {
   assertTrue(parent.supports.any{it.url=="https://shared.example/shared"})
   assertFalse(report.keywords.any{it.key=="fim da escala"||it.key=="escala nacional"})
  }
+ @Test fun overlappingKeywordPhrasesCollapseIntoOneRankedCardWithAlsoCoversMetadata(){
+  assertEquals(0.5,KeywordTrends.jaccardOverlap(listOf("a","b","c"),listOf("b","c","d")),1e-6)
+  assertEquals(0.0,KeywordTrends.jaccardOverlap(emptyList(),listOf("a")),1e-6)
+  val current=listOf(
+   trendArticle("pope-1","Days after lung treatment, Pope Leo visits ward",host="one.example",language="en"),
+   trendArticle("pope-2","Discharged from hospital, Pope Leo waits for days after lung results",host="two.example",language="en"),
+   trendArticle("pope-3","Pope Leo discharged from hospital, days after lung fever passed",host="three.example",language="en"),
+   trendArticle("pope-4","Pope Leo rested, discharged from hospital wing",host="four.example",language="en"),
+   trendArticle("pope-5","Pope Leo greeted pilgrims",host="five.example",language="en"),
+   trendArticle("pope-6","Pope Leo reviewed guard at noon",host="six.example",language="en")
+  )
+  val result=KeywordTrends.analyze(current,current,TrendFeedHealth(6,0,1_000_000L),0L,1_000_000L,"en")
+  val keywords=result.report.keywords
+  assertEquals("overlapping phrases must not occupy separate cards: ${keywords.map{it.key}}",1,keywords.size)
+  val card=keywords.single()
+  assertEquals("pope leo",card.key)
+  assertEquals("Pope Leo",card.label)
+  assertEquals(6,card.currentArticles)
+  assertEquals(6,card.currentPublishers)
+  assertEquals(listOf("Days after lung","Discharged from hospital"),card.variations)
+  assertEquals("Also covers: Days after lung, Discharged from hospital",card.metadata)
+  assertTrue(result.text.contains("Also covers: Days after lung, Discharged from hospital"))
+  val saved=KeywordReportCodec.decode(KeywordReportCodec.encode(result.report))!!.keywords.single()
+  assertEquals("Also covers: Days after lung, Discharged from hospital",saved.metadata)
+ }
  @Test fun repeatedPhraseNeedsIndependentArticlesAndPublishers(){
   val articles=listOf(trendArticle("a","Quantum battery opens",host="one.example"),trendArticle("a","Quantum battery opens",host="one.example"),trendArticle("b","Quantum battery improves",host="two.example"),trendArticle("c","Unrelated shipment",host="three.example"))
   val result=KeywordTrends.analyze(articles,emptyList(),TrendFeedHealth(3,0,1_000_000L),0L,1_000_000L,"all")

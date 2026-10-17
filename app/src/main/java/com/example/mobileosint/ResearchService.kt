@@ -24,7 +24,7 @@ enum class ResearchLanguageMode(val label:String,val languageCodes:Set<String>,v
  companion object{fun fromCodes(codes:Set<String>)=entries.firstOrNull{it.languageCodes==codes}?:BOTH}
 }
 data class TrendSupport(val title:String,val url:String,val publisher:String,val publishedAt:Long?,val firstSeenAt:Long,val excerpt:String)
-data class TrendKeyword(val key:String,val label:String,val currentArticles:Int,val currentPublishers:Int,val previousArticles:Int,val previousPublishers:Int,val status:String,val supports:List<TrendSupport>,val variations:List<String>?=null)
+data class TrendKeyword(val key:String,val label:String,val currentArticles:Int,val currentPublishers:Int,val previousArticles:Int,val previousPublishers:Int,val status:String,val supports:List<TrendSupport>,val variations:List<String>?=null,val metadata:String?=null)
 data class KeywordReport(val kind:String="keyword-trends-v2",val start:Long,val end:Long,val previousStart:Long,val currentArticles:Int,val currentPublishers:Int,val currentUndated:Int,val previousArticles:Int,val previousPublishers:Int,val previousUndated:Int,val staleFeeds:Int,val sourceCount:Int,val lastRefresh:Long?,val baselineSparse:Boolean,val filters:String,val keywords:List<TrendKeyword>)
 data class TrendSummary(val text:String,val diagnostics:String,val supporting:List<TrendArticle>,val report:KeywordReport)
 data class TrendScoreDiagnostic(val articleFrequency:Int,val articleCount:Int,val idf:Double,val coverageBonus:Double,val phraseWeight:Double,val acronymWeight:Double,val total:Double)
@@ -39,7 +39,7 @@ object KeywordReportCodec {
  fun decode(text:String):KeywordReport?=if(!text.startsWith("{"))null else runCatching{
   if(JsonParser.parseString(text).asJsonObject.get("kind")?.asString=="keyword-trends-v2"){
    val report=gson.fromJson(text,KeywordReport::class.java)
-   report.copy(keywords=report.keywords.map{it.copy(variations=it.variations.orEmpty())})
+   report.copy(keywords=report.keywords.map{it.copy(variations=it.variations.orEmpty(),metadata=it.metadata?:KeywordTrends.variationMetadata(it.variations.orEmpty()))})
   }else null
  }.getOrNull()
 }
@@ -155,6 +155,19 @@ object KeywordTrends {
   val firstWords=meaningfulKeyWords(first);val secondWords=meaningfulKeyWords(second)
   return firstWords.size>1&&secondWords.size>1&&firstWords.any{it in secondWords}||aliasEquivalent(first,second)
  }
+ /** Article-overlap (Jaccard) above which two keyword phrases are the same story and must share one card. */
+ internal const val ARTICLE_OVERLAP_THRESHOLD=0.5
+ /** Jaccard similarity of two article-id sets: |first ∩ second| / |first ∪ second|; 0.0 when either side has no articles. */
+ internal fun jaccardOverlap(first:Collection<String>,second:Collection<String>):Double{
+  if(first.isEmpty()||second.isEmpty())return 0.0
+  val firstIds=if(first is Set<String>)first else first.toSet()
+  val secondIds=if(second is Set<String>)second else second.toSet()
+  val union=firstIds.union(secondIds).size
+  return if(union==0)0.0 else firstIds.intersect(secondIds).size.toDouble()/union
+ }
+ /** Card metadata for grouped keyword phrases: the lower-ranked overlapping phrases shown under the main title. */
+ internal fun variationMetadata(variations:List<String>):String?=
+  variations.takeIf{it.isNotEmpty()}?.joinToString(prefix="Also covers: ",separator=", ")
  /** Multilingual equivalence comes only from the app's curated synonym table, never from string similarity; labels stay untouched. */
  private fun aliasEquivalent(first:String,second:String):Boolean{
   val firstWords=keyWords(first);val secondWords=keyWords(second)
@@ -227,10 +240,11 @@ object KeywordTrends {
     val candidatePrior = previousIndex[candidate.key].orEmpty().map { it.id }.toSet()
 
     val parent = ranked.firstOrNull { chosen ->
-     val chosenIds = chosen.value.map { it.id }.toSet()
-     val textOverlap = overlappingPhrases(chosen.key, candidate.key) || variationsByParent[chosen.key].orEmpty().any { overlappingPhrases(it, candidate.key) }
-     val articleOverlap = candidateIds.isNotEmpty() && chosenIds.isNotEmpty() &&
-             (candidateIds.intersect(chosenIds).size.toDouble() / candidateIds.union(chosenIds).size >= 0.5)
+     val memberKeys = listOf(chosen.key) + variationsByParent[chosen.key].orEmpty()
+     val textOverlap = memberKeys.any { overlappingPhrases(it, candidate.key) }
+     val articleOverlap = memberKeys.any { member ->
+      jaccardOverlap(candidateIds, currentIndex[member].orEmpty().map { it.id }) >= ARTICLE_OVERLAP_THRESHOLD
+     }
 
      textOverlap || articleOverlap
     }
@@ -243,8 +257,8 @@ object KeywordTrends {
     val overlap=ranked.any{chosen->
      val chosenIds=chosen.value.map{it.id}.toSet();val chosenPrior=previousIndex[chosen.key].orEmpty().map{it.id}.toSet()
      chosen.key.split(' ').size>1&&candidate.key.split(Regex("\\s+")).any{it in chosen.key.split(Regex("\\s+"))}&&candidateIds.size>=2&&publisherCount(candidate.value)>=2&&
-      candidateIds.intersect(chosenIds).size.toDouble()/candidateIds.union(chosenIds).size>=0.8&&
-      (candidatePrior.isEmpty()&&chosenPrior.isEmpty()||candidatePrior.isNotEmpty()&&chosenPrior.isNotEmpty()&&candidatePrior.intersect(chosenPrior).size.toDouble()/candidatePrior.union(chosenPrior).size>=0.8)
+      jaccardOverlap(candidateIds,chosenIds)>=0.8&&
+      jaccardOverlap(candidatePrior,chosenPrior)>=0.8
     }
      if(overlap)candidateSelectionReasons[candidate.key]="Suppressed by existing article-overlap comparison against a selected phrase"
     if(!overlap)ranked.add(candidate)
@@ -262,10 +276,18 @@ object KeywordTrends {
   val keywordSupporting=mutableListOf<List<TrendArticle>>()
   if(ranked.isEmpty())lines.add("No indexed articles in the current window; no keyword trend can be assessed.")
   val summaryPrefixSize=lines.size
+  val strengthArticleCap=candidates.maxOfOrNull{it.value.size}?:0
+  val strengthHostCap=candidates.maxOfOrNull{publisherCount(it.value)}?:0
+  /** The card title is the grouped phrase with the highest trend score; ties keep the better ranked phrase. */
+  fun trendScore(candidateKey:String):Double{
+   val candidateArticles=currentIndex[candidateKey].orEmpty()
+   return combinedScore(candidateArticles.size,publisherCount(candidateArticles),strengthArticleCap,strengthHostCap,candidateKey,recent.size)
+  }
   for((rankedTerm,_) in ranked){
    val groupKeys=listOf(rankedTerm)+variationsByParent[rankedTerm].orEmpty()
-   val term=groupKeys.maxByOrNull{currentIndex[it].orEmpty().size}?:rankedTerm
-   val variationKeys=groupKeys.filterNot{it==term}.sortedByDescending{currentIndex[it].orEmpty().size}
+   val term=groupKeys.reduceOrNull{best,candidate->if(trendScore(candidate)>trendScore(best))candidate else best}?:rankedTerm
+   val variationKeys=groupKeys.filterNot{it==term}
+    .sortedWith(compareByDescending<String>{trendScore(it)}.thenByDescending{currentIndex[it].orEmpty().size}.thenByDescending{publisherCount(currentIndex[it].orEmpty())})
    val articles=currentIndex[term].orEmpty()
    val prior=previousIndex[term].orEmpty()
    val currentArticles=(articles+variationKeys.flatMap{currentIndex[it].orEmpty()}).distinctBy{it.id}
@@ -291,11 +313,10 @@ object KeywordTrends {
    val cardSupportStart=supporting.size
    lines.add("\n$label: ${currentArticles.size} articles / $currentPublishers publishers; previous ${previousArticles.size} articles / $previousPublishers publishers. $status.")
 
-   if (variationLabels.isNotEmpty()) {
-    lines.add("Also covers: ${variationLabels.joinToString(", ")}")
-   }
+   val metadata=variationMetadata(variationLabels)
+   if(metadata!=null)lines.add(metadata)
 
-   keywords.add(TrendKeyword(term,label,currentArticles.size,currentPublishers,previousArticles.size,previousPublishers,status,currentArticles.take(100).map{article->TrendSupport(article.title,article.url,publisher(article)?:"publisher unknown",article.publishedAt,article.firstSeenAt,excerpt(article,term))},variationLabels.takeIf{it.isNotEmpty()}))
+   keywords.add(TrendKeyword(term,label,currentArticles.size,currentPublishers,previousArticles.size,previousPublishers,status,currentArticles.take(100).map{article->TrendSupport(article.title,article.url,publisher(article)?:"publisher unknown",article.publishedAt,article.firstSeenAt,excerpt(article,term))},variationLabels.takeIf{it.isNotEmpty()},metadata))
   currentArticles.distinctBy{publisher(it)?:"feed:${it.sourceId}"}.take(2).forEach{article->
     lines.add("- ${article.title} (${publisher(article)?:"publisher unknown"}; ${if(article.publishedAt!=null)"published ${TrendDisplay.time(article.publishedAt)}" else "first seen ${TrendDisplay.time(article.firstSeenAt)}, publication unknown"})\n  ${article.url}")
     supporting.add(article)
